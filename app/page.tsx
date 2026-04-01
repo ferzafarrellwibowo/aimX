@@ -1,14 +1,28 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { GameMode, GameSettings } from '@/lib/gameEngine';
+
+// Simple arrow icons (no external dependency)
+const ChevronLeft = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M15 18l-6-6 6-6" />
+  </svg>
+);
+
+const ChevronRight = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M9 18l6-6-6-6" />
+  </svg>
+);
 
 export default function Home() {
   const router = useRouter();
   const [selectedMode, setSelectedMode] = useState<GameMode | null>(null);
   const [duration, setDuration] = useState<number>(30000);
   const [adaptiveDifficulty, setAdaptiveDifficulty] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>('');
 
   useEffect(() => {
     const saved = localStorage.getItem('aimX_settings');
@@ -38,9 +52,12 @@ export default function Home() {
   };
 
   const modes: { id: GameMode; title: string; desc: string; category: string }[] = [
-    { id: 'grid', title: 'Grid Shot', desc: 'Targets spawn in a fixed 3x3 grid. Perfect for building muscle memory.', category: 'Flicking' },
+    { id: 'grid', title: 'Gridshot', desc: 'Targets spawn in a fixed 3x3 grid. Perfect for building muscle memory.', category: 'Flicking' },
     { id: 'flick', title: 'Flick Shot', desc: 'Alternate between a small center target and larger random targets. Perfect for mouse flicking!', category: 'Flicking' },
+    { id: 'microshot', title: 'Microshot', desc: 'Small targets spawn nearby each other. Hit one and the next appears close by. Train micro-adjustments!', category: 'Flicking' },
     { id: 'speed', title: 'Speed Focus', desc: 'Targets spawn rapidly. Test your reaction time and speed.', category: 'Speed' },
+    { id: 'reflex', title: 'Reflex Shots', desc: 'Pure reaction test! Single target with very short lifetime (220ms). Measures your raw reflex speed.', category: 'Speed' },
+    { id: 'burst', title: 'Timed Pressure', desc: 'Fast waves of targets! 5-second bursts with rapid spawns. Bonus points during waves, heavier penalties for misses.', category: 'Speed' },
     { id: 'precision', title: 'Exact Aiming', desc: 'Smaller targets, slower spawns. Master your exact clicking.', category: 'Precision' },
     { id: 'smooth-aiming', title: 'Smooth Aiming', desc: 'Track a medium target moving slowly horizontal. Perfect for beginners to practice smooth mouse control.', category: 'Tracking' },
     { id: 'tracking', title: 'Strafe Tracking', desc: 'Track the moving target! Keep your cursor hovering over the target without clicking.', category: 'Tracking' },
@@ -49,6 +66,18 @@ export default function Home() {
   ];
 
   const categories = ['Flicking', 'Tracking', 'Speed', 'Precision'];
+  
+  // Refs for scroll containers (one per category)
+  const scrollRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
+
+  const scroll = (category: string, direction: 'left' | 'right') => {
+    const container = scrollRefs.current[category];
+    if (container) {
+      const cardWidth = 320 + 16; // card width + gap
+      const scrollAmount = direction === 'left' ? -cardWidth : cardWidth;
+      container.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+    }
+  };
 
 
 
@@ -62,7 +91,7 @@ export default function Home() {
       </div>
       
       {/* Header */}
-      <header className="relative z-10 pt-12 pb-16 text-center">
+      <header className="relative z-10 pt-12 pb-8 text-center">
         <div className="mb-2">
           <h1 className="text-7xl md:text-9xl font-black tracking-tighter text-white inline-block">
             aim<span className="text-red-600 drop-shadow-[0_0_30px_rgba(220,38,38,0.6)]">X</span>
@@ -71,10 +100,47 @@ export default function Home() {
         <p className="text-[#666666] text-sm tracking-wide">Train your aim — flicking, tracking, speed & precision drills</p>
       </header>
 
+      {/* Search Bar */}
+      <div className="relative z-10 w-full max-w-md mx-auto mb-12">
+        <div className="relative">
+          <svg 
+            className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#666666]" 
+            fill="none" 
+            stroke="currentColor" 
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            type="text"
+            placeholder="Search game modes..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-12 pr-4 py-3 bg-[#111111] border border-white/10 rounded-xl text-white placeholder-[#666666] focus:outline-none focus:border-white/30 focus:ring-1 focus:ring-white/20 transition-all"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-4 top-1/2 -translate-y-1/2 text-[#666666] hover:text-white transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* Main content */}
       <main className="w-full max-w-5xl relative z-10 flex flex-col space-y-16 pb-24">
         {categories.map((category) => {
-          const categoryModes = modes.filter(m => m.category === category);
+          const categoryModes = modes.filter(m => 
+            m.category === category && 
+            (searchQuery === '' || 
+             m.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+             m.desc.toLowerCase().includes(searchQuery.toLowerCase()) ||
+             m.category.toLowerCase().includes(searchQuery.toLowerCase()))
+          );
           if (categoryModes.length === 0) return null;
           
           return (
@@ -83,10 +149,31 @@ export default function Home() {
               <div className="flex items-center gap-3 mb-6">
                 <h2 className="text-lg font-bold text-white uppercase tracking-[0.2em]">{category}</h2>
                 <div className="flex-1 h-px bg-gradient-to-r from-white/10 to-transparent"></div>
+                
+                {/* Arrow navigation buttons */}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => scroll(category, 'left')}
+                    className="p-2 rounded-lg bg-white/5 border border-white/10 text-white/60 hover:text-white hover:bg-white/10 transition-all duration-200"
+                    aria-label="Scroll left"
+                  >
+                    <ChevronLeft />
+                  </button>
+                  <button
+                    onClick={() => scroll(category, 'right')}
+                    className="p-2 rounded-lg bg-white/5 border border-white/10 text-white/60 hover:text-white hover:bg-white/10 transition-all duration-200"
+                    aria-label="Scroll right"
+                  >
+                    <ChevronRight />
+                  </button>
+                </div>
               </div>
               
               {/* Horizontal scrollable cards */}
-              <div className="flex gap-4 overflow-x-auto pb-4 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent items-start">
+              <div 
+                ref={(el) => { scrollRefs.current[category] = el; }}
+                className="flex gap-4 overflow-x-auto pb-4 scrollbar-hide items-start"
+              >
                 {categoryModes.map((m) => {
                   const isSelected = selectedMode === m.id;
                   

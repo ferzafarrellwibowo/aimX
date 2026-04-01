@@ -4,15 +4,17 @@ import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import GameCanvas from '@/components/GameCanvas';
 import Heatmap from '@/components/Heatmap';
-import { GameSettings, GameState } from '@/lib/gameEngine';
+import { GameSettings, GameState, ClickPoint } from '@/lib/gameEngine';
 
 export default function GamePage() {
   const router = useRouter();
   const [settings, setSettings] = useState<GameSettings | null>(null);
   const [finalState, setFinalState] = useState<GameState | null>(null);
+  const [selectedWave, setSelectedWave] = useState<number>(0); // 0 = all waves
 
   const handleRestart = () => {
     setFinalState(null);
+    setSelectedWave(0);
   };
 
   useEffect(() => {
@@ -141,6 +143,16 @@ export default function GamePage() {
                   </div>
                 )}
 
+                {/* Burst mode specific stats */}
+                {settings?.mode === 'burst' && (
+                  <div className="col-span-2 space-y-1 relative z-10 pt-4 border-t border-white/10">
+                    <div className="text-[#a1a1aa] text-xs font-bold uppercase tracking-widest">Waves Completed</div>
+                    <div className="text-2xl font-bold text-amber-400">
+                      {finalState.waveClickHistory?.length || 0} / {finalState.totalWaves}
+                    </div>
+                  </div>
+                )}
+
                 {settings?.adaptiveDifficulty && (
                   <div className="col-span-2 space-y-1 relative z-10 pt-4 border-t border-white/10">
                     <div className="text-[#a1a1aa] text-xs font-bold uppercase tracking-widest">Mode</div>
@@ -152,8 +164,38 @@ export default function GamePage() {
               {/* Heatmap Card - only show for non-tracking modes */}
               {settings?.mode !== 'tracking' && settings?.mode !== 'switch-tracking' && settings?.mode !== 'smooth-aiming' && settings?.mode !== 'dropshot' && (
                 <div className="bg-[#111111]/80 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-[0_0_40px_rgba(0,0,0,0.5)]">
+                  {/* Wave navigation for burst mode */}
+                  {settings?.mode === 'burst' && finalState.waveClickHistory && finalState.waveClickHistory.length > 0 && (
+                    <div className="flex items-center justify-between mb-4">
+                      <button
+                        onClick={() => setSelectedWave(prev => Math.max(0, prev - 1))}
+                        disabled={selectedWave === 0}
+                        className="p-2 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                        </svg>
+                      </button>
+                      <div className="text-sm font-bold text-white">
+                        {selectedWave === 0 ? 'All Waves' : `Wave ${selectedWave}`}
+                      </div>
+                      <button
+                        onClick={() => setSelectedWave(prev => Math.min(finalState.waveClickHistory.length, prev + 1))}
+                        disabled={selectedWave >= finalState.waveClickHistory.length}
+                        className="p-2 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
                   <Heatmap 
-                    clickHistory={finalState.clickHistory || []}
+                    clickHistory={
+                      settings?.mode === 'burst' && selectedWave > 0 && finalState.waveClickHistory?.[selectedWave - 1]
+                        ? finalState.waveClickHistory[selectedWave - 1]
+                        : finalState.clickHistory || []
+                    }
                     canvasWidth={finalState.canvasWidth || 800}
                     canvasHeight={finalState.canvasHeight || 600}
                     width={350}

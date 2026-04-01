@@ -1,4 +1,4 @@
-export type GameMode = 'grid' | 'speed' | 'precision' | 'tracking' | 'switch-tracking' | 'flick' | 'smooth-aiming' | 'dropshot';
+export type GameMode = 'grid' | 'speed' | 'precision' | 'tracking' | 'switch-tracking' | 'flick' | 'smooth-aiming' | 'dropshot' | 'reflex' | 'burst' | 'microshot';
 
 export interface GameSettings {
   mode: GameMode;
@@ -28,6 +28,7 @@ export interface ClickPoint {
   y: number;
   isHit: boolean;
   timestamp: number;
+  waveNumber?: number; // For burst mode
 }
 
 export interface GameState {
@@ -46,6 +47,28 @@ export interface GameState {
   // Tracking mode stats
   trackingTicks: number; // Total tick intervals
   trackingHits: number;  // Ticks where cursor was on target
+  // Reflex mode stats
+  reflexTrials: number;
+  bestReaction: number | null;
+  avgReaction: number;
+  reflexPending: boolean;
+  nextReflexDelay: number;
+  currentReflexSpawnTime: number | null;
+  // Burst mode stats
+  burstWaveActive: boolean;
+  burstWaveStart: number;
+  burstWaveDuration: number;
+  burstWaveSpawnRate: number;
+  burstWaveCooldown: number;
+  burstCooldownStart: number;
+  burstMaxTargets: number;
+  waveHits: number;
+  waveMisses: number;
+  currentWave: number;
+  waveStartHits: number;
+  waveStartMisses: number;
+  totalWaves: number;
+  waveClickHistory: ClickPoint[][]; // Per-wave click history
 }
 
 export interface MissMarker {
@@ -110,6 +133,24 @@ const MODES: Record<GameMode, GameConfig> = {
   flick: {
     maxTargets: 1,
     targetRadius: 15, // Ukuran target tengah (kecil)
+    spawnRate: 0,
+    lifetime: 99999999,
+  },
+  reflex: {
+    maxTargets: 1,
+    targetRadius: 28,
+    spawnRate: 0, // ignored - uses random delay
+    lifetime: 450,
+  },
+  burst: {
+    maxTargets: 6,
+    targetRadius: 24,
+    spawnRate: 140,
+    lifetime: 1500,
+  },
+  microshot: {
+    maxTargets: 1,
+    targetRadius: 32,
     spawnRate: 0,
     lifetime: 99999999,
   }
@@ -180,6 +221,28 @@ export class GameEngine {
       canvasHeight: canvas.height,
       trackingTicks: 0,
       trackingHits: 0,
+      // Reflex mode state
+      reflexTrials: 0,
+      bestReaction: null,
+      avgReaction: 0,
+      reflexPending: false,
+      nextReflexDelay: this.getRandomReflexDelay(),
+      currentReflexSpawnTime: null,
+      // Burst mode state
+      burstWaveActive: false,
+      burstWaveStart: 0,
+      burstWaveDuration: 5000, // default 5 seconds per wave
+      burstWaveSpawnRate: 140,
+      burstWaveCooldown: 2000, // 2 seconds between waves
+      burstCooldownStart: 0,
+      burstMaxTargets: 6,
+      waveHits: 0,
+      waveMisses: 0,
+      currentWave: 0,
+      waveStartHits: 0,
+      waveStartMisses: 0,
+      totalWaves: this.calculateTotalWaves(settings.duration),
+      waveClickHistory: [],
     };
 
     this.bindedPointerDown = this.handlePointerDown.bind(this);
@@ -233,6 +296,115 @@ export class GameEngine {
   }
 
   private updateLogic(now: number) {
+    // Burst mode - timed pressure waves
+    if (this.settings.mode === 'burst') {
+      // Update wave hits/misses tracking
+      this.state.waveHits = this.state.hits - this.state.waveStartHits;
+      this.state.waveMisses = this.state.misses - this.state.waveStartMisses;
+
+      if (this.state.burstWaveActive) {
+        // Wave is active - spawn targets at burstWaveSpawnRate
+        const waveElapsed = now - this.state.burstWaveStart;
+        
+        if (waveElapsed > this.state.burstWaveDuration) {
+          // Wave ended - save wave click history
+          const waveClicks = this.state.clickHistory.filter(c => c.waveNumber === this.state.currentWave);
+          this.state.waveClickHistory.push(waveClicks);
+          
+          // Clear remaining targets and start cooldown
+          this.state.targets = [];
+          this.state.burstWaveActive = false;
+          this.state.burstCooldownStart = now;
+        } else {
+          // Spawn targets during wave
+          if (now - this.lastSpawnTime > this.state.burstWaveSpawnRate && 
+              this.state.targets.length < this.state.burstMaxTargets) {
+            this.spawnTarget(now);
+            this.lastSpawnTime = now;
+          }
+
+          // Update targets (fade, remove expired)
+          for (let i = this.state.targets.length - 1; i >= 0; i--) {
+            const t = this.state.targets[i];
+            const age = now - t.spawnTime;
+            
+            if (age > t.lifetime) {
+              // Target expired without being hit - count as miss with heavier penalty during wave
+              this.state.misses++;
+              this.state.score = Math.max(0, this.state.score - 75); // Heavier penalty during burst
+              this.state.targets.splice(i, 1);
+            } else {
+              let p = age / t.lifetime;
+              t.opacity = p > 0.8 ? 1 - ((p - 0.8) * 5) : Math.min(1, p * 5);
+            }
+          }
+        }
+      } else {
+        // Wave not active - check cooldown
+        if (now - this.state.burstCooldownStart > this.state.burstWaveCooldown) {
+          // Cooldown finished - auto-start next wave
+          this.startBurstWave(5000, 140, 6);
+        }
+      }
+
+      // Update miss markers
+      for (let i = this.state.missMarkers.length - 1; i >= 0; i--) {
+        if (now - this.state.missMarkers[i].spawnTime > 500) {
+          this.state.missMarkers.splice(i, 1);
+        }
+      }
+      return;
+    }
+
+    // Microshot mode - targets spawn nearby each other
+    if (this.settings.mode === 'microshot') {
+      // Spawn first target if none exists
+      if (this.state.targets.length === 0) {
+        this.spawnMicroshotTarget(now);
+      }
+
+      // Update miss markers
+      for (let i = this.state.missMarkers.length - 1; i >= 0; i--) {
+        if (now - this.state.missMarkers[i].spawnTime > 500) {
+          this.state.missMarkers.splice(i, 1);
+        }
+      }
+      return;
+    }
+
+    // Reflex mode - pure reaction time measurement
+    if (this.settings.mode === 'reflex') {
+      // Check if we should spawn a new target
+      if (!this.state.reflexPending && now >= this.lastSpawnTime + this.state.nextReflexDelay) {
+        this.spawnReflexTarget(now);
+        this.state.reflexPending = true;
+      }
+
+      // Check if target lifetime has expired (miss)
+      if (this.state.reflexPending && this.state.targets.length > 0) {
+        const target = this.state.targets[0];
+        const age = now - target.spawnTime;
+        
+        if (age > target.lifetime) {
+          // Missed - lifetime expired without hit
+          this.state.misses++;
+          this.state.targets.splice(0, 1);
+          this.state.reflexPending = false;
+          this.state.currentReflexSpawnTime = null;
+          this.state.nextReflexDelay = this.getRandomReflexDelay();
+          this.lastSpawnTime = now;
+        }
+      }
+
+      // Update miss markers
+      for (let i = this.state.missMarkers.length - 1; i >= 0; i--) {
+        if (now - this.state.missMarkers[i].spawnTime > 500) {
+          this.state.missMarkers.splice(i, 1);
+        }
+      }
+      return;
+    }
+
     // Smooth Aiming mode - slow horizontal movement in center
     if (this.settings.mode === 'smooth-aiming') {
       if (this.settings.adaptiveDifficulty) {
@@ -669,6 +841,96 @@ export class GameEngine {
     });
   }
 
+  private spawnReflexTarget(now: number) {
+    const padding = this.config.targetRadius * 2;
+    const x = padding + Math.random() * (this.canvas.width - padding * 2);
+    const y = padding + Math.random() * (this.canvas.height - padding * 2);
+
+    this.state.targets.push({
+      id: Math.random().toString(36).substr(2, 9),
+      x,
+      y,
+      radius: this.config.targetRadius,
+      spawnTime: now,
+      lifetime: this.config.lifetime,
+      active: true,
+      opacity: 1,
+    });
+
+    this.state.currentReflexSpawnTime = now;
+  }
+
+  private spawnMicroshotTarget(now: number) {
+    const padding = this.config.targetRadius * 2;
+    const microRange = 80; // Distance range for nearby spawn
+    
+    let x: number, y: number;
+    
+    if (this.lastHitPos) {
+      // Spawn near last hit position
+      const angle = Math.random() * Math.PI * 2;
+      const distance = 40 + Math.random() * microRange; // 40-120 pixels away
+      
+      x = this.lastHitPos.x + Math.cos(angle) * distance;
+      y = this.lastHitPos.y + Math.sin(angle) * distance;
+      
+      // Clamp to canvas bounds
+      x = Math.max(padding, Math.min(this.canvas.width - padding, x));
+      y = Math.max(padding, Math.min(this.canvas.height - padding, y));
+    } else {
+      // First target - spawn at center area
+      x = this.canvas.width / 2 + (Math.random() - 0.5) * 200;
+      y = this.canvas.height / 2 + (Math.random() - 0.5) * 200;
+    }
+
+    this.state.targets.push({
+      id: Math.random().toString(36).substr(2, 9),
+      x,
+      y,
+      radius: this.config.targetRadius,
+      spawnTime: now,
+      lifetime: this.config.lifetime,
+      active: true,
+      opacity: 1,
+    });
+  }
+
+  private getRandomReflexDelay(): number {
+    // Random delay between 150ms and 800ms
+    return 150 + Math.random() * 650;
+  }
+
+  private calculateTotalWaves(durationMs: number): number {
+    // Wave duration 5s + cooldown 2s = 7s per cycle
+    // Calculate how many waves fit in the total duration
+    const waveCycleTime = 5000 + 2000; // 7 seconds
+    return Math.floor(durationMs / waveCycleTime) + 1;
+  }
+
+  public startBurstWave(durationMs: number = 5000, spawnRateMs: number = 140, maxTargets: number = 6) {
+    const now = performance.now();
+    
+    // Save previous wave's click history before starting new wave
+    if (this.state.currentWave > 0) {
+      const waveClicks = this.state.clickHistory.filter(c => c.waveNumber === this.state.currentWave);
+      if (this.state.waveClickHistory.length < this.state.currentWave) {
+        this.state.waveClickHistory.push(waveClicks);
+      }
+    }
+    
+    this.state.burstWaveActive = true;
+    this.state.burstWaveStart = now;
+    this.state.burstWaveDuration = durationMs;
+    this.state.burstWaveSpawnRate = spawnRateMs;
+    this.state.burstMaxTargets = maxTargets;
+    this.state.currentWave++;
+    this.state.waveStartHits = this.state.hits;
+    this.state.waveStartMisses = this.state.misses;
+    this.state.waveHits = 0;
+    this.state.waveMisses = 0;
+    this.lastSpawnTime = now;
+  }
+
   private handlePointerMove(e: PointerEvent) {
     if (!this.state.isRunning) return;
     const rect = this.canvas.getBoundingClientRect();
@@ -702,9 +964,36 @@ export class GameEngine {
       // Hitbox yang persis sama dengan ukuran radius target tanpa bonus ukuran.
       if (distance <= t.radius) {
         hit = true;
-        this.state.score += 100;
+        
+        // Burst mode: bonus multiplier during active wave
+        if (this.settings.mode === 'burst' && this.state.burstWaveActive) {
+          this.state.score += 150; // 1.5x bonus during wave
+        } else {
+          this.state.score += 100;
+        }
+        
         this.state.hits++;
         this.state.totalReactionTime += (now - t.spawnTime);
+        
+        // Reflex mode specific: calculate and track reaction time
+        if (this.settings.mode === 'reflex' && this.state.currentReflexSpawnTime !== null) {
+          const reaction = now - t.spawnTime;
+          this.state.reflexTrials++;
+          
+          // Update best reaction
+          if (this.state.bestReaction === null || reaction < this.state.bestReaction) {
+            this.state.bestReaction = reaction;
+          }
+          
+          // Update average reaction
+          this.state.avgReaction = this.state.totalReactionTime / this.state.reflexTrials;
+          
+          // Reset reflex state for next trial
+          this.state.reflexPending = false;
+          this.state.currentReflexSpawnTime = null;
+          this.state.nextReflexDelay = this.getRandomReflexDelay();
+          this.lastSpawnTime = now;
+        }
         
         // Save the hit position to prevent immediate respawns on this spot
         this.lastHitPos = { x: t.x, y: t.y };
@@ -716,21 +1005,34 @@ export class GameEngine {
     }
 
     // Record click for heatmap
-    this.state.clickHistory.push({
+    const clickPoint: ClickPoint = {
       x,
       y,
       isHit: hit,
       timestamp: now
-    });
+    };
+    
+    // For burst mode, include wave number
+    if (this.settings.mode === 'burst' && this.state.burstWaveActive) {
+      clickPoint.waveNumber = this.state.currentWave;
+    }
+    
+    this.state.clickHistory.push(clickPoint);
 
-    // Update adaptive difficulty
-    if (this.settings.adaptiveDifficulty) {
+    // Update adaptive difficulty (skip for reflex mode)
+    if (this.settings.adaptiveDifficulty && this.settings.mode !== 'reflex') {
       this.updateAdaptiveDifficulty(hit);
     }
 
     if (!hit) {
       this.state.misses++;
-      this.state.score = Math.max(0, this.state.score - 50); // Mencegah score negatif (opsional, jika ingin bisa negatif hilangkan Math.max)
+      
+      // Burst mode: heavier miss penalty during active wave
+      if (this.settings.mode === 'burst' && this.state.burstWaveActive) {
+        this.state.score = Math.max(0, this.state.score - 75); // Heavier penalty during burst
+      } else {
+        this.state.score = Math.max(0, this.state.score - 50); // Mencegah score negatif
+      }
       
       // Tambahkan efek miss (tanda X merah)
       this.state.missMarkers.push({
@@ -746,6 +1048,29 @@ export class GameEngine {
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
     // Draw Background grid (optional)
+    
+    // Draw burst mode wave indicator during cooldown
+    if (this.settings.mode === 'burst' && !this.state.burstWaveActive && this.state.currentWave > 0) {
+      const now = performance.now();
+      const cooldownElapsed = now - this.state.burstCooldownStart;
+      const cooldownRemaining = Math.max(0, this.state.burstWaveCooldown - cooldownElapsed);
+      
+      // Draw "WAVE XX" text (no animation)
+      this.ctx.fillStyle = '#ffffff';
+      this.ctx.font = 'bold 64px sans-serif';
+      this.ctx.textAlign = 'center';
+      this.ctx.textBaseline = 'middle';
+      this.ctx.globalAlpha = 0.9;
+      this.ctx.fillText(`WAVE ${this.state.currentWave + 1}`, this.canvas.width / 2, this.canvas.height / 2 - 20);
+      
+      // Draw countdown
+      this.ctx.font = 'bold 24px sans-serif';
+      this.ctx.fillStyle = '#a1a1aa';
+      this.ctx.globalAlpha = 0.7;
+      this.ctx.fillText(`Starting in ${Math.ceil(cooldownRemaining / 1000)}...`, this.canvas.width / 2, this.canvas.height / 2 + 30);
+      
+      this.ctx.globalAlpha = 1.0;
+    }
     
     // Draw dropshot hint indicator when waiting
     if (this.settings.mode === 'dropshot' && this.dropshotWaiting) {
