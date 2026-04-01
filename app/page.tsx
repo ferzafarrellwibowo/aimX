@@ -55,7 +55,7 @@ export default function Home() {
     { id: 'grid', title: 'Gridshot', desc: 'Targets spawn in a fixed 3x3 grid. Perfect for building muscle memory.', category: 'Flicking' },
     { id: 'flick', title: 'Flick Shot', desc: 'Alternate between a small center target and larger random targets. Perfect for mouse flicking!', category: 'Flicking' },
     { id: 'microshot', title: 'Microshot', desc: 'Small targets spawn nearby each other. Hit one and the next appears close by. Train micro-adjustments!', category: 'Flicking' },
-    { id: 'speed', title: 'Speed Focus', desc: 'Targets spawn rapidly. Test your reaction time and speed.', category: 'Speed' },
+    { id: 'speed', title: 'Rapid Shot', desc: 'Targets spawn rapidly. Test your reaction time and speed.', category: 'Speed' },
     { id: 'reflex', title: 'Reflex Shots', desc: 'Pure reaction test! Single target with very short lifetime (220ms). Measures your raw reflex speed.', category: 'Speed' },
     { id: 'burst', title: 'Timed Pressure', desc: 'Fast waves of targets! 5-second bursts with rapid spawns. Bonus points during waves, heavier penalties for misses.', category: 'Speed' },
     { id: 'precision', title: 'Exact Aiming', desc: 'Smaller targets, slower spawns. Master your exact clicking.', category: 'Precision' },
