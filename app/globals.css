@@ -24,3 +24,39 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Card expand animation */
+@keyframes card-expand {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes stagger-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.card-controls-enter {
+  animation: card-expand 0.25s ease-out forwards;
+}
+
+.card-controls-enter > * {
+  opacity: 0;
+  animation: stagger-in 0.2s ease-out forwards;
+}
+
+.card-controls-enter > *:nth-child(1) { animation-delay: 0.05s; }
+.card-controls-enter > *:nth-child(2) { animation-delay: 0.1s; }
+.card-controls-enter > *:nth-child(3) { animation-delay: 0.15s; }

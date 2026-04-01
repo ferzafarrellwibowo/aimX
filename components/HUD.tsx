@@ -1,19 +1,23 @@
 'use client';
 
 import React, { memo } from 'react';
-import type { GameState } from '@/lib/gameEngine';
+import type { GameState, GameMode } from '@/lib/gameEngine';
 
 interface HUDProps {
   state: GameState;
   duration: number;
+  mode: GameMode;
 }
 
-export const HUD = memo(({ state, duration }: HUDProps) => {
-  const { score, hits, misses, timeLeft, totalReactionTime } = state;
+export const HUD = memo(({ state, duration, mode }: HUDProps) => {
+  const { score, hits, misses, timeLeft, totalReactionTime, trackingTicks, trackingHits } = state;
   const totalClicks = hits + misses;
   const accuracy = totalClicks > 0 ? ((hits / totalClicks) * 100).toFixed(1) : '100.0';
+  const trackAccuracy = trackingTicks > 0 ? ((trackingHits / trackingTicks) * 100).toFixed(1) : '100.0';
   const timeSecs = (timeLeft / 1000).toFixed(1);
   const avgReactionMs = hits > 0 ? (totalReactionTime / hits).toFixed(0) : '0';
+  
+  const isTrackingMode = mode === 'tracking' || mode === 'switch-tracking' || mode === 'smooth-aiming' || mode === 'dropshot';
 
   return (
     <div className="absolute top-0 left-0 w-full p-6 flex justify-between items-start pointer-events-none fade-in z-10 text-white">
@@ -23,9 +27,18 @@ export const HUD = memo(({ state, duration }: HUDProps) => {
       </div>
       
       <div className="flex flex-col items-end gap-1.5 font-sans text-sm md:text-base font-medium text-[#a1a1aa] drop-shadow-md uppercase tracking-wider">
-        <div>Accuracy <span className={Number(accuracy) > 90 ? 'text-white' : 'text-rose-400'}>{accuracy}%</span></div>
-        <div>Reaction <span className="text-white">{avgReactionMs}ms</span></div>
-        <div>Hits <span className="text-indigo-400">{hits}</span> / <span className="text-rose-400">{misses}</span></div>
+        {isTrackingMode ? (
+          <>
+            <div>Track Accuracy <span className={Number(trackAccuracy) > 90 ? 'text-white' : 'text-rose-400'}>{trackAccuracy}%</span></div>
+            <div>Time On Target <span className="text-indigo-400">{((trackingHits * 100) / 1000).toFixed(1)}s</span></div>
+          </>
+        ) : (
+          <>
+            <div>Accuracy <span className={Number(accuracy) > 90 ? 'text-white' : 'text-rose-400'}>{accuracy}%</span></div>
+            <div>Reaction <span className="text-white">{avgReactionMs}ms</span></div>
+            <div>Hits <span className="text-indigo-400">{hits}</span> / <span className="text-rose-400">{misses}</span></div>
+          </>
+        )}
       </div>
     </div>
   );

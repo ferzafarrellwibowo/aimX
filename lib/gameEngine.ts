@@ -1,8 +1,9 @@
-export type GameMode = 'grid' | 'speed' | 'precision' | 'tracking' | 'switch-tracking' | 'flick';
+export type GameMode = 'grid' | 'speed' | 'precision' | 'tracking' | 'switch-tracking' | 'flick' | 'smooth-aiming' | 'dropshot';
 
 export interface GameSettings {
   mode: GameMode;
   duration: number; // in milliseconds
+  adaptiveDifficulty?: boolean;
 }
 
 export interface Target {
@@ -22,6 +23,13 @@ export interface Target {
   hoverTime?: number;
 }
 
+export interface ClickPoint {
+  x: number;
+  y: number;
+  isHit: boolean;
+  timestamp: number;
+}
+
 export interface GameState {
   score: number;
   hits: number;
@@ -32,6 +40,12 @@ export interface GameState {
   totalReactionTime: number;
   targets: Target[];
   missMarkers: MissMarker[];
+  clickHistory: ClickPoint[];
+  canvasWidth: number;
+  canvasHeight: number;
+  // Tracking mode stats
+  trackingTicks: number; // Total tick intervals
+  trackingHits: number;  // Ticks where cursor was on target
 }
 
 export interface MissMarker {
@@ -81,6 +95,18 @@ const MODES: Record<GameMode, GameConfig> = {
     spawnRate: 99999999,
     lifetime: 99999999,
   },
+  'smooth-aiming': {
+    maxTargets: 1,
+    targetRadius: 30, // Medium size
+    spawnRate: 99999999,
+    lifetime: 99999999,
+  },
+  'dropshot': {
+    maxTargets: 1,
+    targetRadius: 12, // Smaller size
+    spawnRate: 99999999,
+    lifetime: 99999999,
+  },
   flick: {
     maxTargets: 1,
     targetRadius: 15, // Ukuran target tengah (kecil)
@@ -103,6 +129,20 @@ export class GameEngine {
   private mouseX: number = -1000;
   private mouseY: number = -1000;
   private lastTrackTime: number = 0;
+
+  // Adaptive difficulty state
+  private adaptiveLevel: number = 1; // 1 = normal, increases with better performance
+  private recentHits: boolean[] = []; // Track last N clicks for adaptive calc
+  private readonly adaptiveWindowSize = 10;
+
+  // Tracking adaptive difficulty state
+  private trackingAdaptiveLevel: number = 1; // Starts at 1, gradually increases
+  private lastTrackingAdaptiveUpdate: number = 0;
+
+  // Dropshot state
+  private dropshotDelayStart: number = 0; // When the delay started
+  private dropshotWaiting: boolean = false; // Whether we're in delay phase
+  private dropshotNextX: number = 0; // Pre-calculated X position for next target hint
 
   private onHUDUpdate: HUDUpdateCallback;
   private onGameOver: (state: GameState) => void;
@@ -135,6 +175,11 @@ export class GameEngine {
       totalReactionTime: 0,
       targets: [],
       missMarkers: [],
+      clickHistory: [],
+      canvasWidth: canvas.width,
+      canvasHeight: canvas.height,
+      trackingTicks: 0,
+      trackingHits: 0,
     };
 
     this.bindedPointerDown = this.handlePointerDown.bind(this);
@@ -148,6 +193,7 @@ export class GameEngine {
     this.state.startTime = performance.now();
     this.lastSpawnTime = this.state.startTime;
     this.lastTrackTime = this.state.startTime;
+    this.lastTrackingAdaptiveUpdate = this.state.startTime;
     
     this.loop(performance.now());
   }
@@ -187,7 +233,149 @@ export class GameEngine {
   }
 
   private updateLogic(now: number) {
+    // Smooth Aiming mode - slow horizontal movement in center
+    if (this.settings.mode === 'smooth-aiming') {
+      if (this.settings.adaptiveDifficulty) {
+        this.updateTrackingAdaptive(now);
+      }
+      
+      if (this.state.targets.length === 0) {
+        this.spawnSmoothAimingTarget(now);
+      }
+      
+      const t = this.state.targets[0];
+      if (t) {
+        const speedMultiplier = this.settings.adaptiveDifficulty ? this.getTrackingSpeedMultiplier() : 1;
+        const baseSpeed = 1.5; // Slow speed
+        
+        // Initialize velocity (horizontal only)
+        if (t.vx === undefined) {
+          t.vx = baseSpeed * speedMultiplier * (Math.random() > 0.5 ? 1 : -1);
+        }
+        if (t.vy === undefined) t.vy = 0;
+
+        // Move horizontally
+        t.x += t.vx;
+        
+        // Update radius for adaptive difficulty
+        if (this.settings.adaptiveDifficulty) {
+          t.radius = this.getTrackingAdaptiveRadius();
+        }
+
+        // Bounce off horizontal walls, stay in center vertical band
+        const padding = 50;
+        if (t.x - t.radius < padding) {
+          t.vx = Math.abs(t.vx);
+          t.x = padding + t.radius;
+        } else if (t.x + t.radius > this.canvas.width - padding) {
+          t.vx = -Math.abs(t.vx);
+          t.x = this.canvas.width - padding - t.radius;
+        }
+
+        // Check hover
+        const dx = t.x - this.mouseX;
+        const dy = t.y - this.mouseY;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        t.isHovered = dist <= t.radius;
+        t.opacity = 1;
+
+        // Score ticks every 100ms
+        if (now - this.lastTrackTime > 100) {
+          this.state.trackingTicks++;
+          if (t.isHovered) {
+            this.state.score += 25;
+            this.state.hits++;
+            this.state.trackingHits++;
+          }
+          this.lastTrackTime = now;
+        }
+      }
+      return;
+    }
+
+    // Dropshot mode - target falls from top to bottom
+    if (this.settings.mode === 'dropshot') {
+      if (this.settings.adaptiveDifficulty) {
+        this.updateTrackingAdaptive(now);
+      }
+      
+      // Handle delay between targets
+      if (this.dropshotWaiting) {
+        if (now - this.dropshotDelayStart >= 1000) { // 1 second delay
+          this.dropshotWaiting = false;
+          this.spawnDropshotTarget(now);
+        }
+        return;
+      }
+      
+      // Spawn first target if none exists
+      if (this.state.targets.length === 0 && !this.dropshotWaiting) {
+        this.dropshotWaiting = true;
+        this.dropshotDelayStart = now;
+        // Pre-calculate next spawn position for hint
+        const padding = 50;
+        this.dropshotNextX = padding + Math.random() * (this.canvas.width - padding * 2);
+        return;
+      }
+      
+      const t = this.state.targets[0];
+      if (t) {
+        const speedMultiplier = this.settings.adaptiveDifficulty ? this.getTrackingSpeedMultiplier() : 1;
+        const baseSpeed = 5; // Faster speed
+        
+        // Initialize velocity (vertical only - falling)
+        if (t.vy === undefined) {
+          t.vy = baseSpeed * speedMultiplier;
+        }
+        if (t.vx === undefined) t.vx = 0;
+
+        // Move downward
+        t.y += t.vy;
+        
+        // Update radius for adaptive difficulty
+        if (this.settings.adaptiveDifficulty) {
+          t.radius = this.getTrackingAdaptiveRadius();
+        }
+
+        // Check if target reached bottom
+        if (t.y - t.radius > this.canvas.height) {
+          // Remove target and start delay for next one
+          this.state.targets.splice(0, 1);
+          this.dropshotWaiting = true;
+          this.dropshotDelayStart = now;
+          // Pre-calculate next spawn position for hint
+          const padding = 50;
+          this.dropshotNextX = padding + Math.random() * (this.canvas.width - padding * 2);
+          return;
+        }
+
+        // Check hover
+        const dx = t.x - this.mouseX;
+        const dy = t.y - this.mouseY;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        t.isHovered = dist <= t.radius;
+        t.opacity = 1;
+
+        // Score ticks every 100ms
+        if (now - this.lastTrackTime > 100) {
+          this.state.trackingTicks++;
+          if (t.isHovered) {
+            this.state.score += 25;
+            this.state.hits++;
+            this.state.trackingHits++;
+          }
+          this.lastTrackTime = now;
+        }
+      }
+      return;
+    }
+
     if (this.settings.mode === 'tracking' || this.settings.mode === 'switch-tracking') {
+      // Update tracking adaptive difficulty based on elapsed time
+      if (this.settings.adaptiveDifficulty) {
+        this.updateTrackingAdaptive(now);
+      }
+      
       // Tracking spawn
       if (this.state.targets.length === 0) {
         this.spawnTarget(now);
@@ -195,24 +383,29 @@ export class GameEngine {
       
       const t = this.state.targets[0];
       if (t) {
+        // Get adaptive speed multiplier
+        const speedMultiplier = this.getTrackingSpeedMultiplier();
+        
         // Initialize target velocities if needed
         if (t.targetVx === undefined) {
-          const speedOptions = [-3.5, 3.5, -4, 4]; 
-          t.targetVx = speedOptions[Math.floor(Math.random() * speedOptions.length)];
+          const baseSpeed = 3.5;
+          const speedOptions = [-baseSpeed, baseSpeed, -4, 4]; 
+          t.targetVx = speedOptions[Math.floor(Math.random() * speedOptions.length)] * speedMultiplier;
         }
         if (t.targetVy === undefined) {
-          t.targetVy = (Math.random() - 0.5) * 2;
+          t.targetVy = (Math.random() - 0.5) * 2 * speedMultiplier;
         }
         if (t.vx === undefined) t.vx = t.targetVx;
         if (t.vy === undefined) t.vy = t.targetVy;
 
         // "Strafe" logic: smoothly change target velocity occasionally (e.g. every ~1-1.5s on avg)
         if (Math.random() < 0.015) {
-           const speedOptions = [-3.5, 3.5, -4, 4]; 
-           // Primarily move left/right (strafe)
-           t.targetVx = speedOptions[Math.floor(Math.random() * speedOptions.length)];
+           const baseSpeed = 3.5;
+           const speedOptions = [-baseSpeed, baseSpeed, -4, 4]; 
+           // Primarily move left/right (strafe) with adaptive speed
+           t.targetVx = speedOptions[Math.floor(Math.random() * speedOptions.length)] * speedMultiplier;
            // Add slight vertical drift
-           t.targetVy = (Math.random() - 0.5) * 2;
+           t.targetVy = (Math.random() - 0.5) * 2 * speedMultiplier;
         }
 
         // Smoothly interpolate current velocity towards target velocity
@@ -221,6 +414,11 @@ export class GameEngine {
 
         t.x += t.vx;
         t.y += t.vy;
+        
+        // Update radius for adaptive difficulty (shrinking target)
+        if (this.settings.adaptiveDifficulty) {
+          t.radius = this.getTrackingAdaptiveRadius();
+        }
 
         // Bounce off walls smoothly (reverse target velocity and cap position)
         if (t.x - t.radius < 0) {
@@ -249,9 +447,12 @@ export class GameEngine {
 
         // Score ticks every 100ms
         if (now - this.lastTrackTime > 100) {
+           this.state.trackingTicks++; // Count total ticks
+           
            if (t.isHovered) {
              this.state.score += 25;
-             this.state.hits++; // We log hits as "Track Ticks"
+             this.state.hits++;
+             this.state.trackingHits++; // Count successful tracking ticks
              
              if (this.settings.mode === 'switch-tracking') {
                t.hoverTime = (t.hoverTime || 0) + (now - this.lastTrackTime);
@@ -406,10 +607,19 @@ export class GameEngine {
 
     if (!isValid) return; // Skip spawn this frame if we couldn't find a valid spot after 20 attempts
 
-    let overrideRadius = this.config.targetRadius;
+    let overrideRadius = this.getAdaptiveRadius();
     if (this.settings.mode === 'flick') {
       const isCenterTarget = this.state.hits % 2 === 0;
-      overrideRadius = isCenterTarget ? 15 : 35; // Center = small (15), Random = big (35)
+      const baseCenter = 15;
+      const baseRandom = 35;
+      if (this.settings.adaptiveDifficulty) {
+        const scaleFactor = 1 - (this.adaptiveLevel - 1) * 0.1;
+        overrideRadius = isCenterTarget 
+          ? Math.max(8, baseCenter * scaleFactor) 
+          : Math.max(20, baseRandom * scaleFactor);
+      } else {
+        overrideRadius = isCenterTarget ? baseCenter : baseRandom;
+      }
     }
 
     this.state.targets.push({
@@ -418,9 +628,44 @@ export class GameEngine {
       y,
       radius: overrideRadius,
       spawnTime: now,
-      lifetime: this.config.lifetime,
+      lifetime: this.getAdaptiveLifetime(),
       active: true,
       opacity: 0,
+      hoverTime: this.settings.mode === 'switch-tracking' ? 0 : undefined,
+    });
+  }
+
+  private spawnSmoothAimingTarget(now: number) {
+    // Spawn target at center of screen, moving horizontally
+    const x = this.canvas.width / 2;
+    const y = this.canvas.height / 2;
+
+    this.state.targets.push({
+      id: Math.random().toString(36).substr(2, 9),
+      x,
+      y,
+      radius: this.config.targetRadius,
+      spawnTime: now,
+      lifetime: this.config.lifetime,
+      active: true,
+      opacity: 1,
+    });
+  }
+
+  private spawnDropshotTarget(now: number) {
+    // Use pre-calculated X position from hint
+    const x = this.dropshotNextX;
+    const y = -this.config.targetRadius; // Start above screen
+
+    this.state.targets.push({
+      id: Math.random().toString(36).substr(2, 9),
+      x,
+      y,
+      radius: this.config.targetRadius,
+      spawnTime: now,
+      lifetime: this.config.lifetime,
+      active: true,
+      opacity: 1,
     });
   }
 
@@ -435,7 +680,7 @@ export class GameEngine {
   }
 
   private handlePointerDown(e: PointerEvent) {
-    if (!this.state.isRunning || this.settings.mode === 'tracking' || this.settings.mode === 'switch-tracking') return;
+    if (!this.state.isRunning || this.settings.mode === 'tracking' || this.settings.mode === 'switch-tracking' || this.settings.mode === 'smooth-aiming' || this.settings.mode === 'dropshot') return;
 
     const rect = this.canvas.getBoundingClientRect();
     const scaleX = this.canvas.width / rect.width;
@@ -470,6 +715,19 @@ export class GameEngine {
       }
     }
 
+    // Record click for heatmap
+    this.state.clickHistory.push({
+      x,
+      y,
+      isHit: hit,
+      timestamp: now
+    });
+
+    // Update adaptive difficulty
+    if (this.settings.adaptiveDifficulty) {
+      this.updateAdaptiveDifficulty(hit);
+    }
+
     if (!hit) {
       this.state.misses++;
       this.state.score = Math.max(0, this.state.score - 50); // Mencegah score negatif (opsional, jika ingin bisa negatif hilangkan Math.max)
@@ -489,6 +747,40 @@ export class GameEngine {
 
     // Draw Background grid (optional)
     
+    // Draw dropshot hint indicator when waiting
+    if (this.settings.mode === 'dropshot' && this.dropshotWaiting) {
+      const hintX = this.dropshotNextX;
+      const hintY = 20; // Near top of screen
+      const radius = this.config.targetRadius;
+      
+      // Draw pulsing hint circle
+      const now = performance.now();
+      const pulsePhase = ((now - this.dropshotDelayStart) % 500) / 500; // 0-1 pulse cycle
+      const pulseOpacity = 0.3 + 0.3 * Math.sin(pulsePhase * Math.PI * 2);
+      
+      this.ctx.globalAlpha = pulseOpacity;
+      this.ctx.beginPath();
+      this.ctx.arc(hintX, hintY, radius * 1.5, 0, Math.PI * 2);
+      this.ctx.strokeStyle = '#6366f1'; // Indigo
+      this.ctx.lineWidth = 2;
+      this.ctx.setLineDash([5, 5]); // Dashed line
+      this.ctx.stroke();
+      this.ctx.setLineDash([]); // Reset
+      
+      // Draw downward arrow
+      this.ctx.globalAlpha = pulseOpacity + 0.2;
+      this.ctx.beginPath();
+      this.ctx.moveTo(hintX, hintY + radius * 1.5 + 5);
+      this.ctx.lineTo(hintX - 8, hintY + radius * 1.5 + 5 + 12);
+      this.ctx.moveTo(hintX, hintY + radius * 1.5 + 5);
+      this.ctx.lineTo(hintX + 8, hintY + radius * 1.5 + 5 + 12);
+      this.ctx.strokeStyle = '#6366f1';
+      this.ctx.lineWidth = 2;
+      this.ctx.stroke();
+      
+      this.ctx.globalAlpha = 1.0;
+    }
+    
     // Draw Targets
     for (const t of this.state.targets) {
       this.ctx.globalAlpha = Math.max(0, t.opacity);
@@ -501,6 +793,39 @@ export class GameEngine {
       this.ctx.lineWidth = 1;
       this.ctx.strokeStyle = '#ffffff'; 
       this.ctx.stroke();
+
+      // Draw health bar for Switch Tracking mode
+      if (this.settings.mode === 'switch-tracking') {
+        const barWidth = t.radius * 2.5;
+        const barHeight = 6;
+        const barX = t.x - barWidth / 2;
+        const barY = t.y - t.radius - 16;
+        const progress = Math.max(0, 1 - ((t.hoverTime || 0) / 3000)); // Full to empty
+
+        // Background bar (dark)
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+        this.ctx.beginPath();
+        this.ctx.roundRect(barX - 1, barY - 1, barWidth + 2, barHeight + 2, 4);
+        this.ctx.fill();
+
+        // Progress bar (green)
+        if (progress > 0) {
+          const gradient = this.ctx.createLinearGradient(barX, barY, barX + barWidth * progress, barY);
+          gradient.addColorStop(0, '#22c55e'); // green-500
+          gradient.addColorStop(1, '#4ade80'); // green-400
+          this.ctx.fillStyle = gradient;
+          this.ctx.beginPath();
+          this.ctx.roundRect(barX, barY, barWidth * progress, barHeight, 3);
+          this.ctx.fill();
+        }
+
+        // Border
+        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        this.ctx.lineWidth = 1;
+        this.ctx.beginPath();
+        this.ctx.roundRect(barX - 1, barY - 1, barWidth + 2, barHeight + 2, 4);
+        this.ctx.stroke();
+      }
     }
     
     // Draw Miss Markers
@@ -525,7 +850,71 @@ export class GameEngine {
     this.ctx.globalAlpha = 1.0;
   }
 
+  private updateAdaptiveDifficulty(hit: boolean) {
+    this.recentHits.push(hit);
+    if (this.recentHits.length > this.adaptiveWindowSize) {
+      this.recentHits.shift();
+    }
+
+    if (this.recentHits.length >= this.adaptiveWindowSize) {
+      const accuracy = this.recentHits.filter(h => h).length / this.adaptiveWindowSize;
+      
+      // Adjust difficulty based on recent accuracy
+      if (accuracy >= 0.8) {
+        this.adaptiveLevel = Math.min(5, this.adaptiveLevel + 0.2);
+      } else if (accuracy <= 0.4) {
+        this.adaptiveLevel = Math.max(0.5, this.adaptiveLevel - 0.2);
+      }
+    }
+  }
+
+  private getAdaptiveRadius(): number {
+    if (!this.settings.adaptiveDifficulty) return this.config.targetRadius;
+    
+    // Higher level = smaller targets (harder)
+    // Level 1 = 100% size, Level 5 = 60% size
+    const scaleFactor = 1 - (this.adaptiveLevel - 1) * 0.1;
+    return Math.max(10, this.config.targetRadius * scaleFactor);
+  }
+
+  private getAdaptiveLifetime(): number {
+    if (!this.settings.adaptiveDifficulty) return this.config.lifetime;
+    
+    // Higher level = shorter lifetime (harder)
+    // Level 1 = 100% lifetime, Level 5 = 60% lifetime
+    const scaleFactor = 1 - (this.adaptiveLevel - 1) * 0.1;
+    return Math.max(500, this.config.lifetime * scaleFactor);
+  }
+
+  // Tracking adaptive: increases difficulty based on elapsed time relative to total duration
+  private updateTrackingAdaptive(now: number) {
+    const elapsed = now - this.state.startTime;
+    const progress = elapsed / this.settings.duration; // 0 to 1
+    
+    // Level scales from 1 to 10 based on time progress
+    this.trackingAdaptiveLevel = 1 + progress * 9;
+  }
+
+  private getTrackingAdaptiveRadius(): number {
+    const baseRadius = this.config.targetRadius; // 35
+    if (!this.settings.adaptiveDifficulty) return baseRadius;
+    
+    // Start at 100% (35px), end at ~25% (8-9px) when time runs out
+    // Level 1 = 100%, Level 10 = 25%
+    const scaleFactor = 1 - (this.trackingAdaptiveLevel - 1) * 0.083; // ~8.3% reduction per level
+    return Math.max(8, baseRadius * scaleFactor);
+  }
+
+  private getTrackingSpeedMultiplier(): number {
+    if (!this.settings.adaptiveDifficulty) return 1;
+    
+    // Level 1 = 1x speed, Level 10 = 2.5x speed
+    return 1 + (this.trackingAdaptiveLevel - 1) * 0.167;
+  }
+
   private endGame() {
+    this.state.canvasWidth = this.canvas.width;
+    this.state.canvasHeight = this.canvas.height;
     this.cleanup();
     this.onHUDUpdate({ ...this.state });
     this.onGameOver({ ...this.state });
