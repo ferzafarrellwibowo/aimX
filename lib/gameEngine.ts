@@ -196,10 +196,15 @@ export class GameEngine {
       const t = this.state.targets[0];
       if (t) {
         // Initialize target velocities if needed
-        if (t.targetVx === undefined) t.targetVx = 0;
-        if (t.targetVy === undefined) t.targetVy = 0;
-        if (t.vx === undefined) t.vx = 0;
-        if (t.vy === undefined) t.vy = 0;
+        if (t.targetVx === undefined) {
+          const speedOptions = [-3.5, 3.5, -4, 4]; 
+          t.targetVx = speedOptions[Math.floor(Math.random() * speedOptions.length)];
+        }
+        if (t.targetVy === undefined) {
+          t.targetVy = (Math.random() - 0.5) * 2;
+        }
+        if (t.vx === undefined) t.vx = t.targetVx;
+        if (t.vy === undefined) t.vy = t.targetVy;
 
         // "Strafe" logic: smoothly change target velocity occasionally (e.g. every ~1-1.5s on avg)
         if (Math.random() < 0.015) {
