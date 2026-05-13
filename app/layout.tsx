@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "aimX - Aim Trainer",
-  description: "High performance web-based aim trainer.",
+  title: "aimX - Become the Player They Fear",
+  description: "Become the Player They Fear. High performance web-based aim trainer.",
 };
 
 export default function RootLayout({

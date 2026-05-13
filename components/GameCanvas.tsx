@@ -18,7 +18,49 @@ export default function GameCanvas({ settings, onGameOver, onRestart }: GameCanv
   const [startStatus, setStartStatus] = useState<'waiting' | 'countdown' | 'playing'>('waiting');
   const [countdown, setCountdown] = useState(3);
   
+  // Custom crosshair states
+  const defaultCrosshair = { 
+      length: 6, thickness: 2, gap: 4, hasDot: false, dotThickness: 2, color: '#00ff00',
+      hasOutline: true, outlineThickness: 1
+  };
+  const [crosshair, setCrosshair] = useState(defaultCrosshair);
+  const crosshairRef = useRef<HTMLDivElement>(null);
+  
   const engineRef = useRef<GameEngine | null>(null);
+  const countdownAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      countdownAudioRef.current = new Audio('/sounds/3 2 1 0 Countdown With Sound Effect No Copyright Ready To Use.mp3');
+      countdownAudioRef.current.volume = 0.8;
+    }
+  }, []);
+
+  // Load and listen for crosshair changes
+  useEffect(() => {
+    const loadCrosshair = () => {
+      const saved = localStorage.getItem('aimX_crosshair');
+      if (saved) {
+        try { setCrosshair({ ...defaultCrosshair, ...JSON.parse(saved) }); } catch(e) {}
+      }
+    };
+    loadCrosshair();
+    window.addEventListener('crosshairChange', loadCrosshair);
+    return () => window.removeEventListener('crosshairChange', loadCrosshair);
+  }, []);
+
+  // Mouse tracking for custom crosshair (using directly DOM update for zero latency)
+  useEffect(() => {
+    if (startStatus !== 'playing') return;
+    const handleMouseMove = (e: MouseEvent) => {
+      if (crosshairRef.current) {
+        crosshairRef.current.style.left = `${e.clientX}px`;
+        crosshairRef.current.style.top = `${e.clientY}px`;
+      }
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => window.removeEventListener('mousemove', handleMouseMove);
+  }, [startStatus]);
 
   // Resize handler to make canvas fill play area
   useEffect(() => {
@@ -80,6 +122,10 @@ export default function GameCanvas({ settings, onGameOver, onRestart }: GameCanv
   const handleContainerClick = () => {
     if (startStatus === 'waiting') {
       setStartStatus('countdown');
+      if (countdownAudioRef.current) {
+        countdownAudioRef.current.currentTime = 0;
+        countdownAudioRef.current.play().catch(err => console.warn('Audio play failed:', err));
+      }
     }
   };
 
@@ -118,7 +164,7 @@ export default function GameCanvas({ settings, onGameOver, onRestart }: GameCanv
           <canvas
             ref={canvasRef}
             className={`w-full h-full block touch-none select-none ${startStatus === 'playing' ? '' : 'pointer-events-none'}`}
-            style={{ cursor: startStatus === 'playing' ? 'crosshair' : 'default' }}
+            style={{ cursor: startStatus === 'playing' ? 'none' : 'default' }}
           />
         </div>
       </div>
@@ -142,6 +188,53 @@ export default function GameCanvas({ settings, onGameOver, onRestart }: GameCanv
           <div className="text-8xl md:text-[150px] font-black text-white">
             {countdown}
           </div>
+        </div>
+      )}
+
+      {/* Custom Crosshair */}
+      {startStatus === 'playing' && (
+        <div ref={crosshairRef} style={{
+          position: 'fixed',
+          left: -100,
+          top: -100,
+          pointerEvents: 'none',
+          transform: 'translate(-50%, -50%)',
+          zIndex: 9999
+        }}>
+          {(() => {
+             const d = Number(crosshair.gap) || 0;
+             const l = Number(crosshair.length) || 0;
+             const t = Number(crosshair.thickness) || 0;
+             const dotT = Number(crosshair.dotThickness) || 0;
+             const o = crosshair.hasOutline ? (Number(crosshair.outlineThickness) || 0) : 0;
+             const totalSize = (d + l + o) * 2;
+             const svgSize = Math.max(totalSize, 60);
+             const center = svgSize / 2;
+             return (
+               <svg width={svgSize} height={svgSize} overflow="visible">
+                 {/* Outline Layer */}
+                 {crosshair.hasOutline && (
+                    <>
+                        {crosshair.hasDot && (
+                            <rect x={center - (dotT / 2) - o} y={center - (dotT / 2) - o} width={dotT + (o * 2)} height={dotT + (o * 2)} fill="#000000" />
+                        )}
+                        <rect x={center - (t / 2) - o} y={center - d - l - o} width={t + (o * 2)} height={l + (o * 2)} fill="#000000" />
+                        <rect x={center - (t / 2) - o} y={center + d - o} width={t + (o * 2)} height={l + (o * 2)} fill="#000000" />
+                        <rect x={center - d - l - o} y={center - (t / 2) - o} width={l + (o * 2)} height={t + (o * 2)} fill="#000000" />
+                        <rect x={center + d - o} y={center - (t / 2) - o} width={l + (o * 2)} height={t + (o * 2)} fill="#000000" />
+                    </>
+                 )}
+                 {/* Color Layer */}
+                 {crosshair.hasDot && (
+                    <rect x={center - dotT / 2} y={center - dotT / 2} width={dotT} height={dotT} fill={crosshair.color} />
+                 )}
+                 <rect x={center - t / 2} y={center - d - l} width={t} height={l} fill={crosshair.color} />
+                 <rect x={center - t / 2} y={center + d} width={t} height={l} fill={crosshair.color} />
+                 <rect x={center - d - l} y={center - t / 2} width={l} height={t} fill={crosshair.color} />
+                 <rect x={center + d} y={center - t / 2} width={l} height={t} fill={crosshair.color} />
+               </svg>
+             );
+          })()}
         </div>
       )}
     </div>

@@ -4,12 +4,14 @@ import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import GameCanvas from '@/components/GameCanvas';
 import Heatmap from '@/components/Heatmap';
-import { GameSettings, GameState, ClickPoint } from '@/lib/gameEngine';
+import { GameSettings, GameState, ClickPoint, buildSessionResult } from '@/lib/gameEngine';
+import { handleGameOver as handleChallengeGameOver, GameOverResult } from '@/lib/challengeIntegration';
 
 export default function GamePage() {
   const router = useRouter();
   const [settings, setSettings] = useState<GameSettings | null>(null);
   const [finalState, setFinalState] = useState<GameState | null>(null);
+  const [highScore, setHighScore] = useState<number>(0);
   const [selectedWave, setSelectedWave] = useState<number>(0); // 0 = all waves
 
   const handleRestart = () => {
@@ -54,6 +56,21 @@ export default function GamePage() {
     const currentHigh = parseInt(localStorage.getItem(key) || '0', 10);
     if (state.score > currentHigh) {
       localStorage.setItem(key, state.score.toString());
+      setHighScore(state.score);
+    } else {
+      setHighScore(currentHigh);
+    }
+
+    // Evaluate challenges
+    if (settings) {
+      const sessionResult = buildSessionResult(state, settings);
+      const result: GameOverResult = handleChallengeGameOver(sessionResult);
+      if (result.newUnlocks.length > 0) {
+        console.log('[Challenges] New unlocks:', result.newUnlocks);
+      }
+      if (result.challengesCompleted.length > 0) {
+        console.log('[Challenges] Challenges completed:', result.challengesCompleted);
+      }
     }
   };
 
@@ -69,12 +86,6 @@ export default function GamePage() {
             <span>Menu</span>
           </div>
           
-          <button 
-            onClick={() => router.push('/')}
-            className="absolute bottom-6 left-6 z-50 bg-[#1a1a1a]/80 backdrop-blur-md hover:bg-[#222222] border border-white/10 text-[#a1a1aa] hover:text-white px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest transition-all shadow-[0_0_15px_rgba(0,0,0,0.5)]"
-          >
-            ← Exit
-          </button>
           <GameCanvas 
             settings={settings}
             onGameOver={handleGameOver}
@@ -93,13 +104,15 @@ export default function GamePage() {
               <div className="flex-1 bg-[#111111]/80 backdrop-blur-xl border border-white/10 rounded-2xl p-8 shadow-[0_0_40px_rgba(0,0,0,0.5)] grid grid-cols-2 gap-8 text-center relative overflow-hidden">
                 <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[200px] h-[200px] bg-indigo-500/20 rounded-full blur-[60px] pointer-events-none"></div>
                 
-                <div className="space-y-1 relative z-10">
-                  <div className="text-[#a1a1aa] text-xs font-bold uppercase tracking-widest">Score</div>
+                {/* Score Section */}
+                <div className="space-y-1 relative z-10 flex flex-col items-center justify-center">
+                  <div className="text-[#a1a1aa] text-xs font-bold uppercase tracking-widest mb-2">Score</div>
                   <div className="text-4xl font-black text-white">{finalState.score}</div>
+                  <div className="text-xs text-white/50 font-bold uppercase tracking-widest mt-3">Highest Score: <span className="text-indigo-400">{highScore}</span></div>
                 </div>
                 
-                <div className="space-y-1 relative z-10">
-                  <div className="text-[#a1a1aa] text-xs font-bold uppercase tracking-widest">
+                <div className="space-y-1 relative z-10 flex flex-col items-center justify-center">
+                  <div className="text-[#a1a1aa] text-xs font-bold uppercase tracking-widest mb-2">
                     {settings?.mode === 'tracking' || settings?.mode === 'switch-tracking' || settings?.mode === 'smooth-aiming' || settings?.mode === 'dropshot' ? 'Track Accuracy' : 'Accuracy'}
                   </div>
                   <div className="text-4xl font-black text-white">

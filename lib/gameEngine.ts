@@ -1,3 +1,5 @@
+import type { SessionResult } from '@/lib/challengeTypes';
+
 export type GameMode = 'grid' | 'speed' | 'precision' | 'tracking' | 'switch-tracking' | 'flick' | 'smooth-aiming' | 'dropshot' | 'reflex' | 'burst' | 'microshot';
 
 export interface GameSettings {
@@ -21,6 +23,7 @@ export interface Target {
   opacity: number;
   isHovered?: boolean;
   hoverTime?: number;
+  isCenter?: boolean; // For flick mode
 }
 
 export interface ClickPoint {
@@ -185,11 +188,16 @@ export class GameEngine {
   private dropshotWaiting: boolean = false; // Whether we're in delay phase
   private dropshotNextX: number = 0; // Pre-calculated X position for next target hint
 
+  // Flick state
+  private flickPhase: 'center' | 'random' = 'center';
+
   private onHUDUpdate: HUDUpdateCallback;
   private onGameOver: (state: GameState) => void;
   
   private bindedPointerDown: (e: PointerEvent) => void;
   private bindedPointerMove: (e: PointerEvent) => void;
+
+  private hitAudio: HTMLAudioElement | null = null;
 
   constructor(
     canvas: HTMLCanvasElement, 
@@ -247,6 +255,43 @@ export class GameEngine {
 
     this.bindedPointerDown = this.handlePointerDown.bind(this);
     this.bindedPointerMove = this.handlePointerMove.bind(this);
+
+    if (typeof window !== 'undefined') {
+      // Get user-selected hit sound from localStorage, default to hitmarker
+      let savedSound = localStorage.getItem('aimX_hitSound') || 'hitmarker';
+      if (savedSound.startsWith('{') || savedSound.startsWith('"')) {
+          try {
+              const parsed = JSON.parse(savedSound);
+              savedSound = parsed.id || parsed || 'hitmarker';
+          } catch(e) {}
+      }
+      
+      const soundFiles: Record<string, string> = {
+        'hitmarker': 'hitmarker.mp3',
+        'pop': 'Pop.mp3',
+        'tick': 'Tick.mp3',
+        'click': 'Click.mp3',
+        'retro': 'Retro.mp3',
+      };
+      
+      const soundVolumes: Record<string, number> = {
+        'hitmarker': 0.8,
+        'pop': 1.5,
+        'tick': 1.0,
+        'click': 0.9,
+        'retro': 0.7,
+      };
+
+      // Start offset to skip silence/delay at beginning of audio files
+      const soundOffsets: Record<string, number> = {
+        'pop': 0.08,
+      };
+      const soundFile = soundFiles[savedSound] || 'hitmarker.mp3';
+      this.hitAudio = new Audio(`/sounds/${soundFile}`);
+      this.hitAudio.volume = soundVolumes[savedSound] ?? 0.5;
+      // Store offset for use during playback
+      (this.hitAudio as HTMLAudioElement & { startOffset?: number }).startOffset = soundOffsets[savedSound] || 0;
+    }
   }
 
   public start() {
@@ -257,6 +302,7 @@ export class GameEngine {
     this.lastSpawnTime = this.state.startTime;
     this.lastTrackTime = this.state.startTime;
     this.lastTrackingAdaptiveUpdate = this.state.startTime;
+    this.flickPhase = 'center';
     
     this.loop(performance.now());
   }
@@ -643,9 +689,37 @@ export class GameEngine {
     }
 
     // Spawn targets
-    if (this.settings.mode === 'grid' || this.settings.mode === 'flick') {
+    if (this.settings.mode === 'grid') {
       while (this.state.targets.length < this.config.maxTargets) {
         this.spawnTarget(now);
+      }
+    } else if (this.settings.mode === 'flick') {
+      if (this.state.targets.length === 0) {
+        this.spawnTarget(now);
+      } else if (this.flickPhase === 'center' && this.state.targets.length > 0) {
+        const t = this.state.targets[0];
+        const dx = t.x - this.mouseX;
+        const dy = t.y - this.mouseY;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        
+        t.isHovered = dist <= t.radius;
+        t.opacity = 1;
+        
+        if (now - this.lastTrackTime > 100) {
+           if (t.isHovered) {
+             t.hoverTime = (t.hoverTime || 0) + (now - this.lastTrackTime);
+             if (t.hoverTime >= 1500) { // 1.5 seconds
+               this.state.targets.splice(0, 1);
+               this.flickPhase = 'random';
+             }
+           } else {
+             t.hoverTime = 0; // Reset if not hovered
+           }
+           this.lastTrackTime = now;
+        }
+      } else {
+        // Keep lastTrackTime updated so it doesn't jump when switching back to center
+        this.lastTrackTime = now;
       }
     } else if (now - this.lastSpawnTime > this.config.spawnRate && this.state.targets.length < this.config.maxTargets) {
       this.spawnTarget(now);
@@ -711,7 +785,7 @@ export class GameEngine {
         x = offsetX + c * cellW + cellW / 2;
         y = offsetY + r * cellH + cellH / 2;
       } else if (this.settings.mode === 'flick') {
-        const isCenterTarget = this.state.hits % 2 === 0;
+        const isCenterTarget = this.flickPhase === 'center';
         
         if (isCenterTarget) {
           x = this.canvas.width / 2;
@@ -781,7 +855,7 @@ export class GameEngine {
 
     let overrideRadius = this.getAdaptiveRadius();
     if (this.settings.mode === 'flick') {
-      const isCenterTarget = this.state.hits % 2 === 0;
+      const isCenterTarget = this.flickPhase === 'center';
       const baseCenter = 15;
       const baseRandom = 35;
       if (this.settings.adaptiveDifficulty) {
@@ -803,7 +877,8 @@ export class GameEngine {
       lifetime: this.getAdaptiveLifetime(),
       active: true,
       opacity: 0,
-      hoverTime: this.settings.mode === 'switch-tracking' ? 0 : undefined,
+      hoverTime: this.settings.mode === 'switch-tracking' || (this.settings.mode === 'flick' && this.flickPhase === 'center') ? 0 : undefined,
+      isCenter: this.settings.mode === 'flick' && this.flickPhase === 'center'
     });
   }
 
@@ -957,6 +1032,9 @@ export class GameEngine {
     // Check hit reversed array to hit top-most targets
     for (let i = this.state.targets.length - 1; i >= 0; i--) {
       const t = this.state.targets[i];
+      if (t.isCenter && this.settings.mode === 'flick') {
+        continue; // Ignore clicks on the center target in flick mode
+      }
       const dx = t.x - x;
       const dy = t.y - y;
       const distance = Math.sqrt(dx * dx + dy * dy);
@@ -964,6 +1042,17 @@ export class GameEngine {
       // Hitbox yang persis sama dengan ukuran radius target tanpa bonus ukuran.
       if (distance <= t.radius) {
         hit = true;
+
+        if (this.hitAudio) {
+          const hitSound = this.hitAudio.cloneNode() as HTMLAudioElement;
+          hitSound.volume = this.hitAudio.volume;
+          // Apply start offset if specified (to skip silence/delay)
+          const startOffset = (this.hitAudio as HTMLAudioElement & { startOffset?: number }).startOffset || 0;
+          if (startOffset > 0) {
+            hitSound.currentTime = startOffset;
+          }
+          hitSound.play().catch(() => {});
+        }
         
         // Burst mode: bonus multiplier during active wave
         if (this.settings.mode === 'burst' && this.state.burstWaveActive) {
@@ -997,6 +1086,11 @@ export class GameEngine {
         
         // Save the hit position to prevent immediate respawns on this spot
         this.lastHitPos = { x: t.x, y: t.y };
+        
+        // Return to center phase in flick mode
+        if (this.settings.mode === 'flick') {
+          this.flickPhase = 'center';
+        }
         
         // Remove target
         this.state.targets.splice(i, 1);
@@ -1111,21 +1205,32 @@ export class GameEngine {
       this.ctx.globalAlpha = Math.max(0, t.opacity);
       this.ctx.beginPath();
       this.ctx.arc(t.x, t.y, t.radius, 0, Math.PI * 2);
-      this.ctx.fillStyle = t.isHovered ? '#6366f1' : '#ededed'; // Bright white/gray, turns Indigo when tracked!
-      this.ctx.fill();
       
-      // Outline with subtle glow look by using shadow or stroke
-      this.ctx.lineWidth = 1;
-      this.ctx.strokeStyle = '#ffffff'; 
-      this.ctx.stroke();
+      if (t.isCenter && this.settings.mode === 'flick') {
+        // Red outline if not hovered, green if hovered. Transparent/black inside.
+        this.ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        this.ctx.fill();
+        this.ctx.lineWidth = 2;
+        this.ctx.strokeStyle = t.isHovered ? '#22c55e' : '#ef4444'; // Green if hovered, otherwise red
+        this.ctx.stroke();
+      } else {
+        this.ctx.fillStyle = t.isHovered ? '#6366f1' : '#ededed'; // Bright white/gray, turns Indigo when tracked!
+        this.ctx.fill();
+        
+        // Outline with subtle glow look by using shadow or stroke
+        this.ctx.lineWidth = 1;
+        this.ctx.strokeStyle = '#ffffff'; 
+        this.ctx.stroke();
+      }
 
-      // Draw health bar for Switch Tracking mode
-      if (this.settings.mode === 'switch-tracking') {
+      // Draw health bar for Switch Tracking mode or Flick center
+      if (this.settings.mode === 'switch-tracking' || (this.settings.mode === 'flick' && t.isCenter)) {
         const barWidth = t.radius * 2.5;
         const barHeight = 6;
         const barX = t.x - barWidth / 2;
         const barY = t.y - t.radius - 16;
-        const progress = Math.max(0, 1 - ((t.hoverTime || 0) / 3000)); // Full to empty
+        const totalHoverTime = this.settings.mode === 'flick' ? 1500 : 3000;
+        const progress = Math.max(0, 1 - ((t.hoverTime || 0) / totalHoverTime)); // Full to empty
 
         // Background bar (dark)
         this.ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
@@ -1244,4 +1349,17 @@ export class GameEngine {
     this.onHUDUpdate({ ...this.state });
     this.onGameOver({ ...this.state });
   }
+}
+
+export function buildSessionResult(state: GameState, settings: GameSettings): SessionResult {
+  const avgReactionTime = state.hits > 0 ? state.totalReactionTime / state.hits : 0;
+  return {
+    mode: settings.mode,
+    score: state.score,
+    hits: state.hits,
+    misses: state.misses,
+    avgReactionTime,
+    duration: settings.duration,
+    timestamp: new Date().toISOString(),
+  };
 }

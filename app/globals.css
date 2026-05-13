@@ -70,36 +70,91 @@ body {
   display: none;  /* Chrome, Safari, Opera */
 }
 
-/* Custom Scrollbar - Dark Theme */
+/* Custom Scrollbar - Minimal, auto-hide */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #333333 #0a0a0a;
+  scrollbar-color: transparent transparent;
+}
+
+*:hover {
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
 }
 
 *::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 *::-webkit-scrollbar-track {
-  background: #0a0a0a;
-  border-radius: 4px;
+  background: transparent;
 }
 
 *::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #333333 0%, #222222 100%);
-  border-radius: 4px;
-  border: 2px solid #0a0a0a;
+  background: transparent;
+  border-radius: 3px;
+  transition: background 0.3s;
+}
+
+*:hover::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #444444 0%, #333333 100%);
+  background: rgba(255, 255, 255, 0.25);
 }
 
 *::-webkit-scrollbar-thumb:active {
-  background: linear-gradient(180deg, #555555 0%, #444444 100%);
+  background: rgba(255, 255, 255, 0.35);
 }
 
 *::-webkit-scrollbar-corner {
-  background: #0a0a0a;
+  background: transparent;
+}
+
+/* Modal animation */
+@keyframes modalFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Neon flicker animation for UXTITLED text */
+@keyframes neon-flicker {
+  0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% {
+    text-shadow:
+      0 0 4px #ff2d2d,
+      0 0 11px #ff2d2d,
+      0 0 19px #ff2d2d,
+      0 0 40px #dc2626,
+      0 0 80px #dc2626;
+    opacity: 1;
+  }
+  20%, 24%, 55% {
+    text-shadow: none;
+    opacity: 0.8;
+  }
+}
+
+.neon-text {
+  animation: neon-flicker 3s infinite;
+  text-shadow:
+    0 0 4px #ff2d2d,
+    0 0 11px #ff2d2d,
+    0 0 19px #ff2d2d,
+    0 0 40px #dc2626,
+    0 0 80px #dc2626;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neon-text {
+    animation: none;
+    text-shadow:
+      0 0 4px #ff2d2d,
+      0 0 11px #ff2d2d;
+  }
 }
