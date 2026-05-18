@@ -32,10 +32,50 @@ export default function Heatmap({
     ctx.fillRect(0, 0, width, height);
 
     if (clickHistory.length === 0) {
-      ctx.fillStyle = '#666';
-      ctx.font = '12px sans-serif';
+      // Friendly empty state
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(0, 0, width, height);
+
+      // Subtle grid for visual context
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+      ctx.lineWidth = 1;
+      const gs = 30;
+      for (let x = 0; x <= width; x += gs) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+      for (let y = 0; y <= height; y += gs) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+
+      // Draw target ring icon
+      const cx = width / 2;
+      const cy = height / 2 - 6;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 14, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.5)';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+      ctx.font = 'bold 12px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('No click data', width / 2, height / 2);
+      ctx.fillText('No clicks recorded', cx, cy + 32);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.font = '10px sans-serif';
+      ctx.fillText('Try clicking targets next round', cx, cy + 50);
       return;
     }
 

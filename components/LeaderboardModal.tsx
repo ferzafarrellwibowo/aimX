@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { getMockLeaderboard, getMockFriendsLeaderboard, PlayerScore } from '../lib/mockData';
+import ViewProfileModal from '@/components/ViewProfileModal';
 
 const ChevronLeftIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -82,6 +83,7 @@ export default function LeaderboardModal({ isOpen, onClose }: LeaderboardModalPr
   const [myScore, setMyScore] = useState<number | null>(null);
   const [isFilterHovered, setIsFilterHovered] = useState(false);
   const filterScrollRef = useRef<HTMLDivElement>(null);
+  const [viewPlayer, setViewPlayer] = useState<{id: string; username: string; badge: string} | null>(null);
 
   const scrollFilter = (direction: 'left' | 'right') => {
     if (filterScrollRef.current) {
@@ -253,9 +255,10 @@ export default function LeaderboardModal({ isOpen, onClose }: LeaderboardModalPr
           {leaderboardData.map((player, idx) => (
             <div
               key={player.id}
+              onClick={() => setViewPlayer({ id: player.id, username: player.username, badge: player.badge })}
               className={`
                 grid grid-cols-12 gap-3 px-6 py-3.5 items-center border-b border-white/[0.03]
-                transition-colors duration-150 hover:bg-white/[0.03]
+                transition-colors duration-150 hover:bg-white/[0.03] cursor-pointer
                 ${idx === 0 ? 'bg-yellow-500/[0.04]' : ''}
                 ${idx === 1 ? 'bg-slate-300/[0.03]' : ''}
                 ${idx === 2 ? 'bg-amber-700/[0.03]' : ''}
@@ -314,6 +317,11 @@ export default function LeaderboardModal({ isOpen, onClose }: LeaderboardModalPr
           </span>
         </div>
       </div>
+      <ViewProfileModal
+        isOpen={!!viewPlayer}
+        onClose={() => setViewPlayer(null)}
+        player={viewPlayer || {id:'',username:'',badge:''}}
+      />
     </div>
   );
 }

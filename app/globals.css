@@ -158,3 +158,78 @@ body {
       0 0 11px #ff2d2d;
   }
 }
+
+/* --- Loading bar animation (used by app/game/loading.tsx) --- */
+@keyframes loading-bar {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.loading-bar {
+  width: 100%;
+  animation: loading-bar 1.4s ease-in-out infinite;
+}
+
+/* --- Top route progress bar --- */
+@keyframes route-progress {
+  0%   { width: 0;    opacity: 1; }
+  50%  { width: 70%;  opacity: 1; }
+  100% { width: 100%; opacity: 0; }
+}
+
+.route-progress-bar {
+  animation: route-progress 0.9s ease-out forwards;
+}
+
+/* --- Skeleton shimmer --- */
+@keyframes skeleton-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton,
+  .loading-bar,
+  .route-progress-bar {
+    animation: none;
+  }
+}
+
+/* --- Accessibility: focus-visible styles --- */
+:focus-visible {
+  outline: 2px solid rgba(220, 38, 38, 0.65);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Remove default focus ring on mouse, keep keyboard focus */
+button:focus:not(:focus-visible),
+a:focus:not(:focus-visible),
+input:focus:not(:focus-visible),
+[role="button"]:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Screen-reader only utility */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

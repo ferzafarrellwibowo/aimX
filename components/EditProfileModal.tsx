@@ -84,6 +84,29 @@ function getTooltipText(milestone: MilestoneDefinition, unlocked: boolean, equip
   return `${milestone.rewardName} — Click to equip`;
 }
 
+function getBadgeColor(badge: string): string {
+  const colors: Record<string, string> = {
+    "Aim Addict": "text-purple-400",
+    "Aim Never Sleeps": "text-purple-400",
+    "Endless Training": "text-blue-400",
+    "High Roller": "text-orange-400",
+    "Legendary Run": "text-orange-500",
+    "Lightning Reflex": "text-blue-400",
+    "Magnet Aim": "text-cyan-400",
+    "Missed Everything": "text-orange-400",
+    "Potato Aim": "text-amber-600",
+    "Quickscope": "text-cyan-400",
+    "Sharp Eyes": "text-teal-400",
+    "Skull Cracker": "text-red-500",
+    "Top 1%": "text-yellow-300",
+    "Top 5%": "text-slate-300",
+    "Top 10%": "text-amber-500",
+    "Ultra Instinct": "text-fuchsia-400",
+    "Weekly Warrior": "text-green-400",
+  };
+  return colors[badge] || "text-white/80";
+}
+
 // --- Tooltip wrapper ---
 const TooltipWrapper = ({ text, children }: { text: string; children: React.ReactNode }) => (
   <div className="relative group">
@@ -110,10 +133,19 @@ export default function EditProfileModal({
   const [localEquippedBadges, setLocalEquippedBadges] = useState<string[]>(
     profileData.equippedBadges || []
   );
+  const [localEquippedTitle, setLocalEquippedTitle] = useState<string | null>(
+    profileData.equippedTitle || null
+  );
+  const [titleDropdownOpen, setTitleDropdownOpen] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const allBorderMilestones = [...NORMAL_BORDER_MILESTONES, ...LUXURY_BORDER_MILESTONES];
+
+  // Get unlocked badge names for title selection
+  const unlockedBadgeNames = BADGE_MILESTONES
+    .filter(m => unlockedRewards.some(r => r.milestoneId === m.id))
+    .map(m => m.rewardName);
 
   const handleUploadClick = () => {
     fileInputRef.current?.click();
@@ -180,6 +212,7 @@ export default function EditProfileModal({
       profilePicture: localProfilePicture,
       equippedBorder: localEquippedBorder,
       equippedBadges: localEquippedBadges,
+      equippedTitle: localEquippedTitle,
     });
     onClose();
   };
@@ -277,6 +310,56 @@ export default function EditProfileModal({
 
               {/* Separator */}
               <div className="h-px w-full bg-white/10" />
+
+              {/* Title Selection */}
+              <div>
+                <h3 className="text-sm font-semibold text-white/70 mb-3">
+                  Title
+                </h3>
+                <div className="relative">
+                  <button
+                    onClick={() => setTitleDropdownOpen(!titleDropdownOpen)}
+                    className="w-full flex items-center justify-between px-4 py-2.5 bg-[#1a1a1f] border border-white/10 rounded-lg text-sm hover:border-white/20 transition-colors"
+                  >
+                    <span className={localEquippedTitle ? getBadgeColor(localEquippedTitle) + ' font-medium' : 'text-white/40'}>
+                      {localEquippedTitle || 'No title selected'}
+                    </span>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`text-white/40 transition-transform ${titleDropdownOpen ? 'rotate-180' : ''}`}>
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  </button>
+
+                  {titleDropdownOpen && (
+                    <>
+                      <div className="fixed inset-0 z-[61]" onClick={() => setTitleDropdownOpen(false)} />
+                      <div className="absolute left-0 right-0 top-full mt-1 bg-[#1a1a1f] border border-white/10 rounded-lg shadow-xl z-[62] max-h-48 overflow-y-auto">
+                        {/* No title option */}
+                        <button
+                          onClick={() => { setLocalEquippedTitle(null); setTitleDropdownOpen(false); }}
+                          className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${!localEquippedTitle ? 'bg-white/10 text-white font-medium' : 'text-white/60 hover:bg-white/5 hover:text-white'}`}
+                        >
+                          No title
+                        </button>
+                        {unlockedBadgeNames.length === 0 ? (
+                          <div className="px-4 py-3 text-xs text-white/30">
+                            Unlock badges to use them as titles
+                          </div>
+                        ) : (
+                          unlockedBadgeNames.map(name => (
+                            <button
+                              key={name}
+                              onClick={() => { setLocalEquippedTitle(name); setTitleDropdownOpen(false); }}
+                              className={`w-full text-left px-4 py-2.5 text-sm font-medium transition-colors ${localEquippedTitle === name ? 'bg-white/10' : 'hover:bg-white/5'} ${getBadgeColor(name)}`}
+                            >
+                              {name}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
 
               {/* Border Selection Section — merged Normal + Luxury */}
               <div>

@@ -38,6 +38,7 @@ const DEFAULT_PROFILE_DATA: ProfileData = {
   profilePicture: null,
   equippedBorder: null,
   equippedBadges: [],
+  equippedTitle: null,
 };
 
 // --- Validation Functions ---
@@ -198,6 +199,7 @@ export function loadProfileData(): ProfileData {
       profilePicture: parsed.profilePicture ?? null,
       equippedBorder: parsed.equippedBorder ?? null,
       equippedBadges: Array.isArray(parsed.equippedBadges) ? parsed.equippedBadges : [],
+      equippedTitle: parsed.equippedTitle ?? null,
     };
   } catch (e) {
     console.warn('[challengeStore] Failed to load profile data:', e);
@@ -248,20 +250,21 @@ export function saveProfileData(data: ProfileData): void {
 }
 
 /**
- * For demo/testing: pre-unlock the first 3 borders and first 2 badges.
- * Call this once on first load if no rewards exist.
+ * For demo/testing: pre-unlock ALL borders and badges for preview.
+ * Forces re-generation if not all milestones are unlocked.
  */
 export function initDemoRewards(): UnlockedReward[] {
+  const { MILESTONE_DEFINITIONS } = require('@/lib/milestoneDefinitions');
   const existing = loadUnlockedRewards();
-  if (existing.length > 0) return existing;
   
-  const demoRewards: UnlockedReward[] = [
-    { milestoneId: 'border_normal_01', unlockedAt: new Date().toISOString() },
-    { milestoneId: 'border_normal_02', unlockedAt: new Date().toISOString() },
-    { milestoneId: 'border_normal_03', unlockedAt: new Date().toISOString() },
-    { milestoneId: 'badge_missed_everything', unlockedAt: new Date().toISOString() },
-    { milestoneId: 'badge_potato_aim', unlockedAt: new Date().toISOString() },
-  ];
+  // If already all unlocked, return existing
+  if (existing.length >= MILESTONE_DEFINITIONS.length) return existing;
+  
+  // Unlock all milestones
+  const demoRewards: UnlockedReward[] = MILESTONE_DEFINITIONS.map((m: { id: string }) => ({
+    milestoneId: m.id,
+    unlockedAt: new Date().toISOString(),
+  }));
   saveUnlockedRewards(demoRewards);
   return demoRewards;
 }

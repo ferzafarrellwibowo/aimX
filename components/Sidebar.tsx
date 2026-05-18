@@ -1,16 +1,23 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
-import { MOCK_FRIENDS } from '@/lib/mockData';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { MOCK_FRIENDS, searchPlayers } from '@/lib/mockData';
+import { useToast } from '@/components/Toast';
 
 // --- Icons ---
 const SettingsIcon = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
   </svg>
 );
+const HomeIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" />
+  </svg>
+);
 const LoginIcon = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" /><polyline points="10 17 15 12 10 7" /><line x1="15" y1="12" x2="3" y2="12" />
   </svg>
 );
@@ -66,87 +73,151 @@ const PencilIcon = () => (
   </svg>
 );
 
+// --- Badge Color Helper ---
+function getBadgeColorClass(badge: string): string {
+  const colors: Record<string, string> = {
+    "Aim Addict": "text-purple-400",
+    "Aim Never Sleeps": "text-purple-400",
+    "Endless Training": "text-blue-400",
+    "High Roller": "text-orange-400",
+    "Legendary Run": "text-orange-500",
+    "Lightning Reflex": "text-blue-400",
+    "Magnet Aim": "text-cyan-400",
+    "Missed Everything": "text-orange-400",
+    "Potato Aim": "text-amber-600",
+    "Quickscope": "text-cyan-400",
+    "Sharp Eyes": "text-teal-400",
+    "Skull Cracker": "text-red-500",
+    "Top 1%": "text-yellow-300",
+    "Top 5%": "text-slate-300",
+    "Top 10%": "text-amber-500",
+    "Ultra Instinct": "text-fuchsia-400",
+    "Weekly Warrior": "text-green-400",
+  };
+  return colors[badge] || "text-white/80";
+}
+
 // --- Main Sidebar Component ---
 type PanelType = 'profile' | 'settings' | 'friends' | 'analytics' | 'challenges' | null;
 
 import LeaderboardModal from '@/components/LeaderboardModal';
 import ChallengePanel from '@/components/ChallengePanel';
 import EditProfileModal from '@/components/EditProfileModal';
-import { loadProfileData, saveProfileData, loadUnlockedRewards, initDemoRewards } from '@/lib/challengeStore';
-import { ProfileData, UnlockedReward } from '@/lib/challengeTypes';
+import ViewProfileModal from '@/components/ViewProfileModal';
+import { loadProfileData, saveProfileData, loadUnlockedRewards, initDemoRewards, loadCumulativeStats } from '@/lib/challengeStore';
+import { ProfileData, UnlockedReward, CumulativeStats } from '@/lib/challengeTypes';
+import { BADGE_MILESTONES } from '@/lib/milestoneDefinitions';
+import { loadSessionHistory, getTotalPlayTime, getSessionCount, SessionHistoryEntry } from '@/lib/sessionHistory';
 
 const Sidebar = () => {
+  const pathname = usePathname();
+  const router = useRouter();
+  const { showToast } = useToast();
   const [activePanel, setActivePanel] = useState<PanelType>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false); 
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+
+  const isOnHome = pathname === '/';
 
   const handleIconClick = (targetPanel: PanelType) => {
     let panelToOpen = targetPanel;
     // If panel is not settings and user is not logged in, force open profile (for login)
     if (targetPanel !== null && targetPanel !== 'settings' && !isLoggedIn) {
       panelToOpen = 'profile';
+      if (targetPanel !== 'profile') {
+        showToast({
+          title: 'Sign in required',
+          description: 'Log in to access this feature.',
+          variant: 'info',
+          duration: 3000,
+        });
+      }
     }
     setActivePanel(prev => (prev === panelToOpen ? null : panelToOpen));
+  };
+
+  const handleLogout = () => {
+    setIsLoggedIn(false);
+    setShowLogoutConfirm(false);
+    showToast({ title: 'Logged out', description: 'See you next time.', variant: 'info', duration: 2500 });
   };
 
   return (
     <>
       <aside 
+        aria-label="Primary navigation"
         className={`
           fixed top-0 left-0 z-40 h-screen bg-[#0c0c0e] border-r border-white/5 flex transition-all duration-300 ease-in-out
           ${activePanel ? 'w-96' : 'w-20'}
         `}
       >
         {/* --- Icon Column --- */}
-        <div className="w-20 h-full flex flex-col items-center justify-between py-6 flex-shrink-0">
+        <nav className="w-20 h-full flex flex-col items-center justify-between py-6 flex-shrink-0" aria-label="Sidebar navigation">
           <div className="flex flex-col items-center gap-4">
-            <div className="w-10 h-10 flex items-center justify-center">
+            <button
+              type="button"
+              onClick={() => router.push('/')}
+              aria-label="Go to home"
+              className="w-10 h-10 flex items-center justify-center rounded-lg hover:bg-white/5 transition-colors"
+            >
               <h1 className="text-3xl font-black text-white"><span className="text-red-600">X</span></h1>
-            </div>
+            </button>
             <div className="flex flex-col items-center gap-2 mt-8">
-              <SidebarButton tooltip="Profile" onClick={() => handleIconClick('profile')} isActive={activePanel === 'profile'}>
+              <SidebarButton
+                tooltip="Home"
+                onClick={() => router.push('/')}
+                isActive={isOnHome && !activePanel}
+                ariaLabel="Home"
+                ariaCurrent={isOnHome ? 'page' : undefined}
+              >
+                <HomeIcon />
+              </SidebarButton>
+              <SidebarButton tooltip="Profile" onClick={() => handleIconClick('profile')} isActive={activePanel === 'profile'} ariaLabel="Profile" ariaExpanded={activePanel === 'profile'}>
                 <UserIcon />
               </SidebarButton>
               <SidebarButton tooltip="Global Leaderboard" onClick={() => {
                 if (!isLoggedIn) {
+                  showToast({ title: 'Sign in required', description: 'Log in to view the leaderboard.', variant: 'info', duration: 3000 });
                   setActivePanel(prev => prev === 'profile' ? null : 'profile');
                 } else {
                   setIsLeaderboardOpen(true);
                 }
-              }}>
+              }} ariaLabel="Global Leaderboard">
                 <TrophyIcon />
               </SidebarButton>
-              <SidebarButton tooltip="Friends" onClick={() => handleIconClick('friends')} isActive={activePanel === 'friends'}>
+              <SidebarButton tooltip="Friends" onClick={() => handleIconClick('friends')} isActive={activePanel === 'friends'} ariaLabel="Friends" ariaExpanded={activePanel === 'friends'}>
                 <FriendsHeartIcon />
               </SidebarButton>
-              <SidebarButton tooltip="Analytics" onClick={() => handleIconClick('analytics')} isActive={activePanel === 'analytics'}>
+              <SidebarButton tooltip="Analytics" onClick={() => handleIconClick('analytics')} isActive={activePanel === 'analytics'} ariaLabel="Analytics" ariaExpanded={activePanel === 'analytics'}>
                 <AnalyticsIcon />
               </SidebarButton>
-              <SidebarButton tooltip="Challenges" onClick={() => handleIconClick('challenges')} isActive={activePanel === 'challenges'}>
+              <SidebarButton tooltip="Challenges" onClick={() => handleIconClick('challenges')} isActive={activePanel === 'challenges'} ariaLabel="Challenges" ariaExpanded={activePanel === 'challenges'}>
                 <ChallengeIcon />
               </SidebarButton>
             </div>
           </div>
           <div className="flex flex-col items-center gap-4 w-full">
-            <SidebarButton tooltip="Settings" onClick={() => handleIconClick('settings')} isActive={activePanel === 'settings'}>
+            <SidebarButton tooltip="Settings" onClick={() => handleIconClick('settings')} isActive={activePanel === 'settings'} ariaLabel="Settings" ariaExpanded={activePanel === 'settings'}>
               <SettingsIcon />
             </SidebarButton>
             
             {isLoggedIn && (
               <>
-                <div className="w-12 h-px bg-white/10" />
+                <div className="w-12 h-px bg-white/10" aria-hidden="true" />
 
                 <SidebarButton 
                   tooltip="Logout" 
                   className="text-red-500 bg-transparent hover:bg-red-500/10 hover:text-red-400"
-                  onClick={() => setIsLoggedIn(false)}
+                  onClick={() => setShowLogoutConfirm(true)}
+                  ariaLabel="Logout"
                 >
                   <LoginIcon />
                 </SidebarButton>
               </>
             )}
           </div>
-        </div>
+        </nav>
 
         {/* --- Expanded Panel --- */}
         <div className="flex-grow overflow-hidden bg-[#111114]">
@@ -170,20 +241,71 @@ const Sidebar = () => {
         isOpen={isLeaderboardOpen} 
         onClose={() => setIsLeaderboardOpen(false)} 
       />
+
+      {/* Logout Confirmation Modal */}
+      {showLogoutConfirm && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="logout-title">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowLogoutConfirm(false)} />
+          <div className="relative bg-[#111114] border border-white/10 rounded-2xl p-6 max-w-sm w-full shadow-[0_30px_80px_rgba(0,0,0,0.8)]">
+            <h3 id="logout-title" className="text-lg font-bold text-white mb-2">Logout</h3>
+            <p className="text-sm text-white/70 mb-6">Are you sure you want to logout?</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowLogoutConfirm(false)}
+                className="flex-1 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white/80 font-semibold text-sm hover:bg-white/10 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleLogout}
+                className="flex-1 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-semibold text-sm transition-colors"
+              >
+                Logout
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };
 
 // --- Helper Components ---
-const SidebarButton = ({ children, tooltip, onClick, isActive, className }: { children: React.ReactNode; tooltip: string; onClick?: () => void; isActive?: boolean; className?: string }) => (
+const SidebarButton = ({
+  children,
+  tooltip,
+  onClick,
+  isActive,
+  className,
+  ariaLabel,
+  ariaExpanded,
+  ariaCurrent,
+}: {
+  children: React.ReactNode;
+  tooltip: string;
+  onClick?: () => void;
+  isActive?: boolean;
+  className?: string;
+  ariaLabel?: string;
+  ariaExpanded?: boolean;
+  ariaCurrent?: 'page' | 'true' | undefined;
+}) => (
   <div className="group relative">
     <button 
+      type="button"
       onClick={onClick}
-      className={`p-3 rounded-lg transition-all ${className || (isActive ? 'bg-white/10 text-white' : 'text-white/60 bg-transparent hover:bg-white/10 hover:text-white')}`}
+      aria-label={ariaLabel ?? tooltip}
+      aria-expanded={ariaExpanded}
+      aria-current={ariaCurrent}
+      className={`relative p-3 rounded-lg transition-all ${className || (isActive ? 'bg-white/10 text-white' : 'text-white/70 bg-transparent hover:bg-white/10 hover:text-white')}`}
     >
+      {/* Active indicator dot */}
+      {isActive && (
+        <span aria-hidden="true" className="absolute left-[-14px] top-1/2 -translate-y-1/2 w-1 h-6 rounded-r-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]" />
+      )}
       {children}
     </button>
-    <div className="absolute left-full top-1/2 -translate-y-1/2 ml-4 px-3 py-1.5 bg-[#111114] border border-white/10 rounded-md text-sm text-white/80 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-50">
+    <div role="tooltip" className="absolute left-full top-1/2 -translate-y-1/2 ml-4 px-3 py-1.5 bg-[#111114] border border-white/10 rounded-md text-sm text-white/90 whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity pointer-events-none z-50">
       {tooltip}
     </div>
   </div>
@@ -200,6 +322,7 @@ const PanelHeader = ({ title, onClose }: { title: string; onClose: () => void })
 
 // --- Panels ---
 const ProfilePanel = ({ onClose, isLoggedIn = false, onLogin }: { onClose: () => void, isLoggedIn?: boolean, onLogin?: () => void }) => {
+  const { showToast } = useToast();
   const [copied, setCopied] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -208,21 +331,24 @@ const ProfilePanel = ({ onClose, isLoggedIn = false, onLogin }: { onClose: () =>
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [registerUsername, setRegisterUsername] = useState("");
+  const [registerEmail, setRegisterEmail] = useState("");
+  const [registerPassword, setRegisterPassword] = useState("");
+  const [registerConfirmPassword, setRegisterConfirmPassword] = useState("");
 
   const [selectedGame, setSelectedGame] = useState('gridshot');
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [equippedBadge, setEquippedBadgeState] = useState<string | null>(null);
   
-  // Load initial badge from localStorage
+  // Load saved username
+  const [displayUsername, setDisplayUsername] = useState('GuestPlayer');
+  
   useEffect(() => {
-      const savedBadge = localStorage.getItem('aimX_equippedBadge');
-      if (savedBadge) {
-          setEquippedBadgeState(savedBadge);
-      }
+    const saved = localStorage.getItem('aimX_username');
+    if (saved) setDisplayUsername(saved);
   }, []);
-
+  
   // Profile data and edit modal state
-  const [profileData, setProfileData] = useState<ProfileData>({ profilePicture: null, equippedBorder: null, equippedBadges: [] });
+  const [profileData, setProfileData] = useState<ProfileData>({ profilePicture: null, equippedBorder: null, equippedBadges: [], equippedTitle: null });
   const [unlockedRewards, setUnlockedRewards] = useState<UnlockedReward[]>([]);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
@@ -232,14 +358,29 @@ const ProfilePanel = ({ onClose, isLoggedIn = false, onLogin }: { onClose: () =>
       setUnlockedRewards(initDemoRewards());
   }, []);
 
-  const setEquippedBadge = (badge: string | null) => {
-      setEquippedBadgeState(badge);
-      if (badge) {
-          localStorage.setItem('aimX_equippedBadge', badge);
-      } else {
-          localStorage.removeItem('aimX_equippedBadge');
-      }
-  };
+  // Real stats from localStorage
+  const realStats = useMemo(() => {
+    const stats = loadCumulativeStats();
+    const totalPlayTimeMs = getTotalPlayTime();
+    const sessionCount = getSessionCount();
+    const history = loadSessionHistory();
+    const totalMisses = history.reduce((sum, s) => sum + s.misses, 0);
+    const totalHits = history.reduce((sum, s) => sum + s.hits, 0);
+    const totalDurationSec = totalPlayTimeMs / 1000;
+    const cps = totalDurationSec > 0 ? ((totalHits + totalMisses) / totalDurationSec).toFixed(1) : '0.0';
+
+    const hours = Math.floor(totalPlayTimeMs / 3600000);
+    const minutes = Math.floor((totalPlayTimeMs % 3600000) / 60000);
+    const playTimeStr = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+
+    return {
+      playTime: playTimeStr,
+      accuracy: stats.avgAccuracy > 0 ? stats.avgAccuracy.toFixed(1) : '0.0',
+      totalMisses,
+      cps,
+      sessionCount,
+    };
+  }, []);
 
   const userId = "372987654";
 
@@ -255,17 +396,15 @@ const ProfilePanel = ({ onClose, isLoggedIn = false, onLogin }: { onClose: () =>
       { id: 'smooth-aiming', name: 'Smooth Aiming' },
   ];
 
-  const scores: Record<string, string> = {
-      'gridshot': '85,240',
-      'spidershot': '62,100',
-      'microshot': '94,300',
-      'tracking': '45,800',
-      'flick': '72,150',
-      'precision': '68,900',
-      'reflex': '55,420',
-      'burst': '88,100',
-      'smooth-aiming': '41,200',
-  };
+  const scores: Record<string, string> = (() => {
+      const result: Record<string, string> = {};
+      for (const mode of gameModes) {
+        const key = `aimX_highscore_${mode.id}`;
+        const val = localStorage.getItem(key);
+        result[mode.id] = val ? Number(val).toLocaleString() : '0';
+      }
+      return result;
+  })();
 
   const badgeColors: Record<string, string> = {
     "Aim Addict": "text-purple-400 bg-purple-500/10 border-purple-500/20",
@@ -309,9 +448,25 @@ const ProfilePanel = ({ onClose, isLoggedIn = false, onLogin }: { onClose: () =>
                     e.preventDefault();
                     if (loginPassword.length > 0) {
                       setLoginError("");
+                      if (loginUsername.trim()) {
+                        localStorage.setItem('aimX_username', loginUsername.trim());
+                        setDisplayUsername(loginUsername.trim());
+                      }
+                      showToast({
+                        title: 'Welcome back',
+                        description: loginUsername.trim() ? `Signed in as ${loginUsername.trim()}` : 'Signed in successfully.',
+                        variant: 'success',
+                        duration: 2500,
+                      });
                       if (onLogin) onLogin();
                     } else {
                       setLoginError("Invalid password");
+                      showToast({
+                        title: 'Sign in failed',
+                        description: 'Please enter a password to continue.',
+                        variant: 'error',
+                        duration: 3000,
+                      });
                     }
                   }} 
                   className="flex flex-col gap-5 w-full"
@@ -379,12 +534,27 @@ const ProfilePanel = ({ onClose, isLoggedIn = false, onLogin }: { onClose: () =>
                 <div className="text-center mb-6">
                     <h3 className="text-2xl font-bold text-white tracking-tight">Create an account</h3>
                 </div>
-                <form onSubmit={(e) => e.preventDefault()} className="flex flex-col gap-4 w-full">
+                <form onSubmit={(e) => {
+                  e.preventDefault();
+                  if (registerUsername.trim()) {
+                    localStorage.setItem('aimX_username', registerUsername.trim());
+                    setDisplayUsername(registerUsername.trim());
+                  }
+                  showToast({
+                    title: 'Account created',
+                    description: registerUsername.trim() ? `Welcome, ${registerUsername.trim()}!` : 'Welcome to aimX!',
+                    variant: 'success',
+                    duration: 2500,
+                  });
+                  if (onLogin) onLogin();
+                }} className="flex flex-col gap-4 w-full">
                     <div className="flex flex-col gap-2">
                         <label className="text-xs font-semibold text-[#888888] uppercase tracking-wider">Email</label>
                         <input 
                             type="email" 
                             placeholder="Enter your email"
+                            value={registerEmail}
+                            onChange={(e) => setRegisterEmail(e.target.value)}
                             className="bg-[#1a1a1f] border border-white/10 rounded-lg px-4 py-3 text-sm text-white placeholder-[#666666] focus:outline-none focus:border-white/30 focus:bg-[#1f1f25] transition-all font-sans"
                             required
                         />
@@ -394,6 +564,8 @@ const ProfilePanel = ({ onClose, isLoggedIn = false, onLogin }: { onClose: () =>
                         <input 
                             type="text" 
                             placeholder="Choose a username"
+                            value={registerUsername}
+                            onChange={(e) => setRegisterUsername(e.target.value)}
                             className="bg-[#1a1a1f] border border-white/10 rounded-lg px-4 py-3 text-sm text-white placeholder-[#666666] focus:outline-none focus:border-white/30 focus:bg-[#1f1f25] transition-all font-sans"
                             required
                         />
@@ -404,6 +576,8 @@ const ProfilePanel = ({ onClose, isLoggedIn = false, onLogin }: { onClose: () =>
                             <input 
                                 type={showPassword ? "text" : "password"} 
                                 placeholder="Create a password"
+                                value={registerPassword}
+                                onChange={(e) => setRegisterPassword(e.target.value)}
                                 className="w-full bg-[#1a1a1f] border border-white/10 rounded-lg px-4 py-3 pr-10 text-sm text-white placeholder-[#666666] focus:outline-none focus:border-white/30 focus:bg-[#1f1f25] transition-all font-sans"
                                 required
                             />
@@ -426,6 +600,8 @@ const ProfilePanel = ({ onClose, isLoggedIn = false, onLogin }: { onClose: () =>
                             <input 
                                 type={showConfirmPassword ? "text" : "password"} 
                                 placeholder="Confirm your password"
+                                value={registerConfirmPassword}
+                                onChange={(e) => setRegisterConfirmPassword(e.target.value)}
                                 className="w-full bg-[#1a1a1f] border border-white/10 rounded-lg px-4 py-3 pr-10 text-sm text-white placeholder-[#666666] focus:outline-none focus:border-white/30 focus:bg-[#1f1f25] transition-all font-sans"
                                 required
                             />
@@ -498,11 +674,11 @@ const ProfilePanel = ({ onClose, isLoggedIn = false, onLogin }: { onClose: () =>
                 </div>
             </div>
             
-            <h3 className="text-xl font-bold text-white mb-1">GuestPlayer</h3>
+            <h3 className="text-xl font-bold text-white mb-1">{displayUsername}</h3>
             
-            {equippedBadge && (
-                <div className={`text-xs font-semibold px-2 py-1 rounded mb-2 border ${badgeColors[equippedBadge] || 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20'}`}>
-                    {equippedBadge}
+            {profileData.equippedTitle && (
+                <div className={`text-xs font-semibold px-2 py-1 rounded mb-2 border ${badgeColors[profileData.equippedTitle] || 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20'}`}>
+                    {profileData.equippedTitle}
                 </div>
             )}
             
@@ -569,62 +745,57 @@ const ProfilePanel = ({ onClose, isLoggedIn = false, onLogin }: { onClose: () =>
 
                 <div className="flex justify-between items-center">
                     <span className="text-white/60 text-sm">Total Play Time</span>
-                    <span className="text-white font-mono font-medium">24h 15m</span>
+                    <span className="text-white font-mono font-medium">{realStats.playTime || '0m'}</span>
                 </div>
                 <div className="flex justify-between items-center">
                     <span className="text-white/60 text-sm">Accuracy</span>
-                    <span className="text-white font-mono font-medium text-green-400">92.5%</span>
+                    <span className={`text-white font-mono font-medium ${Number(realStats.accuracy) >= 80 ? 'text-green-400' : Number(realStats.accuracy) >= 60 ? 'text-amber-400' : 'text-red-400'}`}>{realStats.accuracy}%</span>
                 </div>
                 <div className="flex justify-between items-center">
-                    <span className="text-white/60 text-sm">Miss Count</span>
-                    <span className="text-white font-mono font-medium text-red-400">1,240</span>
+                    <span className="text-white/60 text-sm">Total Misses</span>
+                    <span className="text-white font-mono font-medium text-red-400">{realStats.totalMisses.toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between items-center">
                     <span className="text-white/60 text-sm">Click Speed</span>
-                    <span className="text-white font-mono font-medium">6.4 CPS</span>
+                    <span className="text-white font-mono font-medium">{realStats.cps} CPS</span>
+                </div>
+                <div className="flex justify-between items-center">
+                    <span className="text-white/60 text-sm">Sessions</span>
+                    <span className="text-white font-mono font-medium">{realStats.sessionCount}</span>
                 </div>
             </div>
 
             {/* Section Separator */}
             <div className="h-px w-full bg-white/10 my-8"></div>
 
-            {/* Achievements / Badges */}
+            {/* Achievements / Badges — only show unlocked */}
             <div>
                 <h4 className="text-xs font-semibold text-[#888888] uppercase tracking-wider mb-4">Achievements</h4>
-                <div className="grid grid-cols-4 gap-4">
-                    {[
-                        "Aim Addict",
-                        "Aim Never Sleeps",
-                        "Endless Training",
-                        "High Roller",
-                        "Legendary Run",
-                        "Lightning Reflex",
-                        "Magnet Aim",
-                        "Missed Everything",
-                        "Potato Aim",
-                        "Quickscope",
-                        "Sharp Eyes",
-                        "Skull Cracker",
-                        "Top 1%",
-                        "Top 10%",
-                        "Top 5%",
-                        "Ultra Instinct",
-                        "Weekly Warrior"
-                    ].map((achievementName, idx) => (
+                {(() => {
+                  const unlockedBadges = BADGE_MILESTONES.filter(m => 
+                    unlockedRewards.some(r => r.milestoneId === m.id)
+                  );
+                  if (unlockedBadges.length === 0) {
+                    return <p className="text-xs text-white/30 text-center py-4">No badges unlocked yet. Keep playing!</p>;
+                  }
+                  return (
+                    <div className="grid grid-cols-4 gap-4">
+                      {unlockedBadges.map((milestone) => (
                         <div 
-                            key={idx} 
-                            onClick={() => setEquippedBadge(achievementName)}
-                            className="aspect-square transition-all flex items-center justify-center cursor-pointer group"
-                            title={achievementName}
+                            key={milestone.id} 
+                            className="aspect-square transition-all flex items-center justify-center group"
+                            title={milestone.rewardName}
                         >
                             <img 
-                                src={`/images/${encodeURIComponent(achievementName)}.png`} 
-                                alt={achievementName}
+                                src={`/images/${encodeURIComponent(milestone.rewardImage)}`} 
+                                alt={milestone.rewardName}
                                 className="w-full h-full object-contain filter group-hover:brightness-110 transition-all drop-shadow-md"
                             />
                         </div>
-                    ))}
-                </div>
+                      ))}
+                    </div>
+                  );
+                })()}
             </div>
         </div>
         <EditProfileModal
@@ -635,6 +806,12 @@ const ProfilePanel = ({ onClose, isLoggedIn = false, onLogin }: { onClose: () =>
             onSave={(data) => {
                 saveProfileData(data);
                 setProfileData(data);
+                showToast({
+                  title: 'Profile updated',
+                  description: 'Your changes have been saved.',
+                  variant: 'success',
+                  duration: 2500,
+                });
             }}
         />
         </>
@@ -645,9 +822,12 @@ const ProfilePanel = ({ onClose, isLoggedIn = false, onLogin }: { onClose: () =>
 
 // --- Friends Panel ---
 const FriendsPanel = ({ onClose }: { onClose: () => void }) => {
+  const { showToast } = useToast();
   const [mode, setMode] = useState<'list' | 'add'>('list');
   const [searchQuery, setSearchQuery] = useState('');
   const [addQuery, setAddQuery] = useState('');
+  const [addedPlayers, setAddedPlayers] = useState<Set<string>>(new Set());
+  const [viewPlayer, setViewPlayer] = useState<{id: string; username: string; badge: string} | null>(null);
 
   const filteredFriends = MOCK_FRIENDS.filter(f => 
     f.username.toLowerCase().includes(searchQuery.toLowerCase())
@@ -683,27 +863,47 @@ const FriendsPanel = ({ onClose }: { onClose: () => void }) => {
                 </button>
               </div>
             </div>
-            <div className="flex-grow overflow-y-auto px-5 py-4 space-y-3">
+            <div className="flex-grow overflow-y-auto px-5 py-4 space-y-3" role="list" aria-label="Friend list">
               {filteredFriends.length === 0 ? (
-                <p className="text-[#666666] text-sm text-center py-4">No friends found.</p>
+                <div role="status" className="flex flex-col items-center text-center py-10 px-4">
+                  <div className="p-4 rounded-full bg-white/[0.03] border border-white/10 mb-4">
+                    <FriendsHeartIcon />
+                  </div>
+                  <p className="text-sm font-semibold text-white mb-1">
+                    {searchQuery ? 'No friends found' : 'No friends yet'}
+                  </p>
+                  <p className="text-xs text-white/50 mb-4 max-w-[220px]">
+                    {searchQuery
+                      ? `No friends match "${searchQuery}". Try a different name.`
+                      : 'Add friends to compare scores and challenge each other.'}
+                  </p>
+                  {!searchQuery && (
+                    <button
+                      onClick={() => setMode('add')}
+                      className="px-4 py-2 rounded-lg bg-white text-black text-xs font-bold tracking-wide hover:bg-neutral-100 transition-colors"
+                    >
+                      Add your first friend
+                    </button>
+                  )}
+                </div>
               ) : (
                 filteredFriends.map(friend => (
-                  <div key={friend.id} className="flex items-center justify-between p-3 bg-[#1a1a1a] rounded-lg border border-white/5 hover:border-white/10 transition-colors">
+                  <div key={friend.id} role="listitem" tabIndex={0} onClick={() => setViewPlayer({ id: friend.id, username: friend.username, badge: friend.badge })} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setViewPlayer({ id: friend.id, username: friend.username, badge: friend.badge }); } }} className="flex items-center justify-between p-3 bg-[#1a1a1a] rounded-lg border border-white/5 hover:border-white/10 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500/60">
                     <div className="flex items-center gap-3">
                       <div className="relative">
-                        <div className="w-10 h-10 bg-[#333] rounded-full flex items-center justify-center font-bold text-white">
+                        <div className="w-10 h-10 bg-[#333] rounded-full flex items-center justify-center font-bold text-white" aria-hidden="true">
                           {friend.username.charAt(0).toUpperCase()}
                         </div>
-                        <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-[#1a1a1a] ${friend.isOnline ? 'bg-green-500' : 'bg-gray-500'}`} />
+                        <div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-[#1a1a1a] ${friend.isOnline ? 'bg-green-500' : 'bg-gray-500'}`} aria-label={friend.isOnline ? 'Online' : 'Offline'} />
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
                           <span className="font-semibold text-white">{friend.username}</span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/80 border border-white/20">
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded bg-white/5 border border-white/10 font-medium ${getBadgeColorClass(friend.badge)}`}>
                             {friend.badge}
                           </span>
                         </div>
-                        <span className="text-xs text-[#888]">
+                        <span className="text-xs text-[#aaa]">
                           {friend.isOnline ? 'Online' : friend.lastSeen}
                         </span>
                       </div>
@@ -722,8 +922,8 @@ const FriendsPanel = ({ onClose }: { onClose: () => void }) => {
               >
                 <ArrowLeftIcon />
               </button>
-              <div className="relative flex-grow">
-                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[#666]">
+              <div className="relative flex-grow group">
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 text-[#555] group-focus-within:text-red-500 transition-colors duration-200">
                   <SearchIcon />
                 </div>
                 <input
@@ -732,41 +932,111 @@ const FriendsPanel = ({ onClose }: { onClose: () => void }) => {
                   value={addQuery}
                   onChange={(e) => setAddQuery(e.target.value)}
                   autoFocus
-                  className="w-full bg-[#1a1a1f] border border-white/10 rounded-lg pl-10 pr-4 py-2 text-sm text-white placeholder-[#666] focus:outline-none focus:border-white/30 focus:bg-[#1f1f25] transition-all"
+                  className="w-full bg-transparent border-b-2 border-white/10 pl-7 pr-4 py-2 text-sm text-white placeholder-[#555] focus:outline-none focus:border-red-500/60 focus:placeholder-white/30 transition-all duration-300"
                 />
               </div>
             </div>
             
-            <div className="flex-grow px-5 py-6">
+            <div className="flex-grow px-5 py-6 overflow-y-auto">
               {addQuery.length < 3 ? (
-                <div className="text-center text-[#666] text-sm">
-                  <p>Type at least 3 characters to search</p>
+                <div role="status" className="flex flex-col items-center text-center py-10 px-4">
+                  <div className="p-4 rounded-full bg-white/[0.03] border border-white/10 mb-4">
+                    <SearchIcon />
+                  </div>
+                  <p className="text-sm font-semibold text-white mb-1">Find players</p>
+                  <p className="text-xs text-white/50 max-w-[240px]">
+                    Type at least 3 characters to search by username or ID.
+                  </p>
                 </div>
               ) : (
-                <div className="animate-fade-in space-y-4">
-                  <p className="text-xs text-[#888] font-semibold uppercase tracking-wider">Search Results</p>
-                  
-                  {/* Mocked Result */}
-                  <div className="flex items-center justify-between p-3 bg-[#1a1a1a] rounded-lg border border-white/5">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center font-bold text-white">
-                        {addQuery.charAt(0).toUpperCase()}
-                      </div>
-                      <div className="flex flex-col">
-                        <span className="font-semibold text-white truncate max-w-[120px]">{addQuery}</span>
-                        <span className="text-xs text-[#888]">ID: #{Math.floor(Math.random() * 9000) + 1000}</span>
-                      </div>
+                (() => {
+                  const results = searchPlayers(addQuery);
+                  return (
+                    <div className="space-y-4">
+                      <p className="text-xs text-white/70 font-semibold uppercase tracking-wider" aria-live="polite">
+                        {results.length > 0 ? `${results.length} result${results.length > 1 ? 's' : ''} found` : 'No results'}
+                      </p>
+                      
+                      {results.length === 0 ? (
+                        <div role="status" className="flex flex-col items-center text-center py-6 px-4">
+                          <div className="p-3 rounded-full bg-white/[0.03] border border-white/10 mb-3">
+                            <SearchIcon />
+                          </div>
+                          <p className="text-sm font-semibold text-white mb-1">No players found</p>
+                          <p className="text-xs text-white/50 max-w-[240px]">
+                            No players match &quot;{addQuery}&quot;. Try a different name.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2" role="list">
+                          {results.map(player => {
+                            const isAdded = addedPlayers.has(player.id);
+                            return (
+                              <div key={player.id} role="listitem" className="flex items-center justify-between p-3 bg-[#1a1a1a] rounded-lg border border-white/5 hover:border-white/10 transition-colors">
+                                <div 
+                                  className="flex items-center gap-3 cursor-pointer flex-1 min-w-0"
+                                  onClick={() => setViewPlayer({ id: player.id, username: player.username, badge: player.badge })}
+                                >
+                                  <div className="w-10 h-10 bg-[#333] rounded-full flex items-center justify-center font-bold text-white flex-shrink-0" aria-hidden="true">
+                                    {player.username.charAt(0).toUpperCase()}
+                                  </div>
+                                  <div className="flex flex-col min-w-0">
+                                    <span className="font-semibold text-white text-sm truncate">{player.username}</span>
+                                    <span className={`text-[10px] font-medium ${getBadgeColorClass(player.badge)}`}>{player.badge}</span>
+                                  </div>
+                                </div>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setAddedPlayers(prev => new Set(prev).add(player.id));
+                                    showToast({
+                                      title: 'Friend request sent',
+                                      description: `Request sent to ${player.username}.`,
+                                      variant: 'success',
+                                      duration: 2500,
+                                    });
+                                  }}
+                                  disabled={isAdded}
+                                  aria-label={isAdded ? `Request already sent to ${player.username}` : `Send friend request to ${player.username}`}
+                                  className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors flex-shrink-0 ml-2 ${
+                                    isAdded 
+                                      ? 'bg-green-500/20 text-green-400 border border-green-500/20 cursor-default'
+                                      : 'bg-white hover:bg-gray-200 text-black'
+                                  }`}
+                                >
+                                  {isAdded ? 'Sent' : 'Add'}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
-                    <button className="px-3 py-1.5 bg-white hover:bg-gray-200 text-black text-xs font-bold rounded-lg transition-colors">
-                      Add
-                    </button>
-                  </div>
-                </div>
+                  );
+                })()
               )}
             </div>
           </div>
         )}
       </div>
+      <ViewProfileModal
+        isOpen={!!viewPlayer}
+        onClose={() => setViewPlayer(null)}
+        player={viewPlayer || {id:'',username:'',badge:''}}
+        onRemoveFriend={() => {
+          // For now just close the modal (mock - no real backend to remove from)
+          // In production this would call an API to remove the friendship
+          if (viewPlayer) {
+            showToast({
+              title: 'Friend removed',
+              description: `${viewPlayer.username} has been removed from your friends.`,
+              variant: 'info',
+              duration: 2500,
+            });
+          }
+          setViewPlayer(null);
+        }}
+      />
     </div>
   );
 };
@@ -787,6 +1057,7 @@ const SettingsSection = ({ title, children }: { title: string; children: React.R
 
 // Specific settings component for Crosshair
 const CrosshairSettings = () => {
+    const { showToast } = useToast();
     const defaultSettings = { 
         length: 6, thickness: 2, gap: 4, hasDot: false, dotThickness: 2, color: '#00ff00',
         hasOutline: true, outlineThickness: 1
@@ -814,6 +1085,12 @@ const CrosshairSettings = () => {
         
         setIsSubmitted(true);
         setTimeout(() => setIsSubmitted(false), 2000);
+        showToast({
+            title: 'Crosshair saved',
+            description: 'Your crosshair will be used in the next game.',
+            variant: 'success',
+            duration: 2500,
+        });
     };
 
     const d = Number(crosshair.gap) || 0;
@@ -923,11 +1200,11 @@ const CrosshairSettings = () => {
                     </div>
                 </div>
 
-                {/* Submit */}
-                <div className="pt-3">
+                {/* Submit + Reset */}
+                <div className="pt-3 flex gap-2">
                     <button 
                         onClick={handleSubmit} 
-                        className={`w-full font-bold py-2.5 rounded-lg transition-all text-sm uppercase tracking-wide flex justify-center items-center gap-2 ${
+                        className={`flex-1 font-bold py-2.5 rounded-lg transition-all text-sm uppercase tracking-wide flex justify-center items-center gap-2 ${
                             isSubmitted 
                             ? 'bg-green-500 text-white' 
                             : 'bg-white text-black hover:bg-gray-200'
@@ -943,6 +1220,17 @@ const CrosshairSettings = () => {
                         ) : (
                             'Submit'
                         )}
+                    </button>
+                    <button
+                        onClick={() => {
+                            setCrosshair(defaultSettings);
+                            localStorage.removeItem('aimX_crosshair');
+                            window.dispatchEvent(new Event('crosshairChange'));
+                            showToast({ title: 'Crosshair reset', description: 'Restored to default settings.', variant: 'info', duration: 2000 });
+                        }}
+                        className="px-4 py-2.5 rounded-lg text-xs font-bold text-white/60 bg-white/5 border border-white/10 hover:text-white hover:bg-white/10 transition-all uppercase tracking-wide"
+                    >
+                        Reset
                     </button>
                 </div>
             </div>
@@ -1138,6 +1426,24 @@ const analyticsData: Record<TimeRange, {
 const AnalyticsPanel = ({ onClose }: { onClose: () => void }) => {
   const [timeRange, setTimeRange] = useState<TimeRange>('7d');
 
+  // Compute real summary from session history
+  const realSummary = useMemo(() => {
+    const history = loadSessionHistory();
+    const now = Date.now();
+    const rangeDays = timeRange === '7d' ? 7 : timeRange === '14d' ? 14 : 30;
+    const cutoff = now - rangeDays * 24 * 60 * 60 * 1000;
+    const filtered = history.filter(s => new Date(s.timestamp).getTime() >= cutoff);
+
+    if (filtered.length === 0) return null;
+
+    const avgScore = Math.round(filtered.reduce((s, e) => s + e.score, 0) / filtered.length);
+    const avgAccuracy = Math.round(filtered.reduce((s, e) => s + e.accuracy, 0) / filtered.length * 10) / 10;
+    const avgReaction = Math.round(filtered.filter(e => e.avgReaction > 0).reduce((s, e) => s + e.avgReaction, 0) / (filtered.filter(e => e.avgReaction > 0).length || 1));
+    const sessions = filtered.length;
+
+    return { avgScore, avgAccuracy, avgReaction, sessions };
+  }, [timeRange]);
+
   const data = analyticsData[timeRange];
 
   // Reusable chart renderer
@@ -1250,35 +1556,47 @@ const AnalyticsPanel = ({ onClose }: { onClose: () => void }) => {
           )}
         </div>
 
-        {/* Period Summary */}
+        {/* Period Summary — uses real data when available */}
         <div className="grid grid-cols-2 gap-3">
           <div className="bg-[#0c0c0e] rounded-xl border border-white/5 p-4">
             <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">Avg Score</div>
-            <div className="text-xl font-bold text-white">{data.summary.avgScore.toLocaleString()}</div>
-            <div className={`text-[10px] mt-1 font-medium ${data.summary.scoreDelta >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {data.summary.scoreDelta >= 0 ? '↑' : '↓'} {Math.abs(data.summary.scoreDelta)}%
-            </div>
+            <div className="text-xl font-bold text-white">{(realSummary?.avgScore ?? data.summary.avgScore).toLocaleString()}</div>
+            {!realSummary && (
+              <div className={`text-[10px] mt-1 font-medium ${data.summary.scoreDelta >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {data.summary.scoreDelta >= 0 ? '↑' : '↓'} {Math.abs(data.summary.scoreDelta)}%
+              </div>
+            )}
+            {realSummary && <div className="text-[10px] mt-1 font-medium text-white/30">from your games</div>}
           </div>
           <div className="bg-[#0c0c0e] rounded-xl border border-white/5 p-4">
             <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">Avg Accuracy</div>
-            <div className="text-xl font-bold text-white">{data.summary.avgAccuracy}%</div>
-            <div className={`text-[10px] mt-1 font-medium ${data.summary.accuracyDelta >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {data.summary.accuracyDelta >= 0 ? '↑' : '↓'} {Math.abs(data.summary.accuracyDelta)}%
-            </div>
+            <div className="text-xl font-bold text-white">{realSummary?.avgAccuracy ?? data.summary.avgAccuracy}%</div>
+            {!realSummary && (
+              <div className={`text-[10px] mt-1 font-medium ${data.summary.accuracyDelta >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {data.summary.accuracyDelta >= 0 ? '↑' : '↓'} {Math.abs(data.summary.accuracyDelta)}%
+              </div>
+            )}
+            {realSummary && <div className="text-[10px] mt-1 font-medium text-white/30">from your games</div>}
           </div>
           <div className="bg-[#0c0c0e] rounded-xl border border-white/5 p-4">
             <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">Avg Reaction</div>
-            <div className="text-xl font-bold text-white">{data.summary.avgReaction}<span className="text-xs text-white/50">ms</span></div>
-            <div className={`text-[10px] mt-1 font-medium ${data.summary.reactionDelta <= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {data.summary.reactionDelta <= 0 ? '↑' : '↓'} {Math.abs(data.summary.reactionDelta)}ms
-            </div>
+            <div className="text-xl font-bold text-white">{realSummary?.avgReaction ?? data.summary.avgReaction}<span className="text-xs text-white/50">ms</span></div>
+            {!realSummary && (
+              <div className={`text-[10px] mt-1 font-medium ${data.summary.reactionDelta <= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {data.summary.reactionDelta <= 0 ? '↑' : '↓'} {Math.abs(data.summary.reactionDelta)}ms
+              </div>
+            )}
+            {realSummary && <div className="text-[10px] mt-1 font-medium text-white/30">from your games</div>}
           </div>
           <div className="bg-[#0c0c0e] rounded-xl border border-white/5 p-4">
             <div className="text-[10px] text-white/40 uppercase tracking-wider mb-1">Sessions</div>
-            <div className="text-xl font-bold text-white">{data.summary.sessions}</div>
-            <div className={`text-[10px] mt-1 font-medium ${data.summary.sessionsDelta >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {data.summary.sessionsDelta >= 0 ? '+' : ''}{data.summary.sessionsDelta} vs prev
-            </div>
+            <div className="text-xl font-bold text-white">{realSummary?.sessions ?? data.summary.sessions}</div>
+            {!realSummary && (
+              <div className={`text-[10px] mt-1 font-medium ${data.summary.sessionsDelta >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {data.summary.sessionsDelta >= 0 ? '+' : ''}{data.summary.sessionsDelta} vs prev
+              </div>
+            )}
+            {realSummary && <div className="text-[10px] mt-1 font-medium text-white/30">this period</div>}
           </div>
         </div>
 

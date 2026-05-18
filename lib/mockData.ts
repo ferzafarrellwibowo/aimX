@@ -7,7 +7,9 @@ export interface PlayerScore {
 }
 
 const BADGES = [
-  "Aim Addict", "High Roller", "Legendary Run", "Magnet Aim", "Sharp Eyes", "Top 1%", "Top 5%", "Top 10%", "Ultra Instinct"
+  "Aim Addict", "High Roller", "Legendary Run", "Magnet Aim", "Sharp Eyes",
+  "Ultra Instinct", "Lightning Reflex", "Quickscope", "Skull Cracker",
+  "Weekly Warrior", "Endless Training", "Potato Aim"
 ];
 
 // Seeded random for consistent mock data
@@ -65,7 +67,40 @@ export const getMockFriendsLeaderboard = (mode: string): PlayerScore[] => {
 };
 
 export const MOCK_FRIENDS = [
-  { id: "101", username: "FlickMaster", isOnline: true, badge: "Grandmaster", lastSeen: "" },
-  { id: "102", username: "SlowButSure", isOnline: false, badge: "Bronze", lastSeen: "2 hours ago" },
-  { id: "103", username: "TrackingGod", isOnline: true, badge: "Ascendant", lastSeen: "" },
+  { id: "101", username: "FlickMaster", isOnline: true, badge: "Ultra Instinct", lastSeen: "" },
+  { id: "102", username: "SlowButSure", isOnline: false, badge: "Potato Aim", lastSeen: "2 hours ago" },
+  { id: "103", username: "TrackingGod", isOnline: true, badge: "Magnet Aim", lastSeen: "" },
 ];
+
+// Mock player database for search
+const MOCK_ALL_PLAYERS = [
+  { id: "usr_201", username: "SniperElite", badge: "Sharp Eyes" },
+  { id: "usr_202", username: "QuickDraw", badge: "Quickscope" },
+  { id: "usr_203", username: "AimBot99", badge: "Magnet Aim" },
+  { id: "usr_204", username: "NoScope360", badge: "Skull Cracker" },
+  { id: "usr_205", username: "PixelHunter", badge: "Lightning Reflex" },
+  { id: "usr_206", username: "HeadshotKing", badge: "Ultra Instinct" },
+  { id: "usr_207", username: "ReflexMaster", badge: "Lightning Reflex" },
+  { id: "usr_208", username: "TrackStar", badge: "Endless Training" },
+  { id: "usr_209", username: "FlickGod", badge: "Legendary Run" },
+  { id: "usr_210", username: "PrecisionX", badge: "Sharp Eyes" },
+  { id: "usr_211", username: "SpeedDemon", badge: "High Roller" },
+  { id: "usr_212", username: "CalmAimer", badge: "Weekly Warrior" },
+  { id: "usr_213", username: "NightOwl", badge: "Aim Addict" },
+  { id: "usr_214", username: "SteadyHand", badge: "Magnet Aim" },
+  { id: "usr_215", username: "BurstKing", badge: "Skull Cracker" },
+];
+
+/**
+ * Search mock players by username or ID.
+ * Excludes players already in the friend list.
+ */
+export function searchPlayers(query: string): { id: string; username: string; badge: string }[] {
+  const q = query.toLowerCase();
+  const friendIds = new Set(MOCK_FRIENDS.map(f => f.id));
+  
+  return MOCK_ALL_PLAYERS.filter(p => 
+    !friendIds.has(p.id) &&
+    (p.username.toLowerCase().includes(q) || p.id.includes(q))
+  ).slice(0, 5); // Max 5 results
+}

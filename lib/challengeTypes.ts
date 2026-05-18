@@ -85,6 +85,7 @@ export interface ProfileData {
   profilePicture: string | null; // base64 data URL or null
   equippedBorder: string | null; // Border image filename or null
   equippedBadges: string[]; // Max 3 badge image filenames
+  equippedTitle: string | null; // Badge name used as title, or null
 }
 
 // --- Session Result ---
